@@ -1,0 +1,206 @@
+"""Проверка структуры сценария. Возвращает список ошибок; пустой список — сценарий корректен."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from app.game.intents import KNOWN_INTENTS
+
+MAX_TEXT = 1024
+# Запас под префиксы (приветствие при возвращении, помощь) и разброс символов.
+MAX_CHAIN_TEXT = 960
+MAX_BUTTON_TITLE = 64
+FALLBACK_TYPES = {"advance", "binary", "end"}
+
+
+def _variants(value: Any) -> list[str]:
+    """Все варианты текста: список или словарь «значение решения -> список»."""
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        out: list[str] = []
+        for items in value.values():
+            out.extend(items)
+        return out
+    return list(value)
+
+
+def _max_len(value: Any) -> int:
+    return max((len(v) for v in _variants(value)), default=0)
+
+
+def validate_episode(episode_id: str, ep: dict) -> list[str]:
+    errors: list[str] = []
+    nodes: dict = ep.get("nodes", {})
+    texts: dict = ep.get("texts", {})
+    start = ep.get("start")
+
+    def err(msg: str) -> None:
+        errors.append(f"[{episode_id}] {msg}")
+
+    if start not in nodes:
+        err(f"стартовый узел {start!r} не найден")
+        return errors
+
+    for key in ("help", "about", "exit", "resume_prefix", "danger"):
+        if not texts.get(key):
+            err(f"texts.{key} отсутствует или пуст")
+
+    # --- ссылки между узлами и обязательные поля -------------------------------
+    edges: dict[str, set[str]] = {name: set() for name in nodes}
+    for name, node in nodes.items():
+        expects: dict = node.get("expects", {})
+        for intent, target in expects.items():
+            if intent not in KNOWN_INTENTS:
+                err(f"{name}: неизвестное намерение {intent!r}")
+            if target not in nodes:
+                err(f"{name}: expects[{intent}] ведёт в несуществующий узел {target!r}")
+            else:
+                edges[name].add(target)
+
+        nxt = node.get("auto_next")
+        if nxt is not None:
+            if nxt not in nodes:
+                err(f"{name}: auto_next ведёт в несуществующий узел {nxt!r}")
+            else:
+                edges[name].add(nxt)
+            if node.get("ask") or expects:
+                err(f"{name}: узел с auto_next не должен задавать вопрос")
+
+        persist_as = node.get("persist_as")
+        if persist_as:
+            if persist_as not in nodes:
+                err(f"{name}: persist_as ведёт в несуществующий узел")
+            else:
+                edges[name].add(persist_as)  # при следующем запуске игра продолжится отсюда
+
+        if node.get("end_session") and expects:
+            err(f"{name}: узел завершения сессии не должен ждать ответа")
+
+        if not node.get("auto_next") and not node.get("end_session") and not expects:
+            err(f"{name}: тупик — нет ни auto_next, ни expects, ни end_session")
+
+        for field in ("say", "ask", "resume", "reask", "hint"):
+            for text in _variants(node.get(field)):
+                if not isinstance(text, str) or not text.strip():
+                    err(f"{name}.{field}: пустой вариант текста")
+                elif len(text) > MAX_TEXT:
+                    err(f"{name}.{field}: вариант длиннее {MAX_TEXT} символов")
+
+        if "by_decision" in node:
+            for field in ("say", "resume"):
+                if field in node and not isinstance(node[field], dict):
+                    err(f"{name}.{field}: при by_decision ожидается словарь")
+
+        buttons = node.get("buttons", [])
+        for title in buttons:
+            if not title or len(title) > MAX_BUTTON_TITLE:
+                err(f"{name}: некорректный заголовок кнопки {title!r}")
+
+        # Узел, который ждёт ответа, обязан уметь помочь ребёнку.
+        if expects:
+            for field in ("ask", "resume", "reask", "hint"):
+                if not _variants(node.get(field)):
+                    err(f"{name}: у ожидающего узла нет поля {field}")
+            if not buttons:
+                err(f"{name}: у ожидающего узла нет кнопок-подсказок")
+            fallback = node.get("fallback")
+            if not fallback or fallback.get("type") not in FALLBACK_TYPES:
+                err(f"{name}: нет корректного fallback ({sorted(FALLBACK_TYPES)})")
+            else:
+                if not _variants(fallback.get("say")):
+                    err(f"{name}: fallback без текста")
+                if fallback["type"] == "advance" and fallback.get("to") not in nodes:
+                    err(f"{name}: fallback.to ведёт в несуществующий узел")
+                    edges[name].add(fallback.get("to"))
+                elif fallback["type"] == "advance":
+                    edges[name].add(fallback["to"])
+                if fallback["type"] == "binary":
+                    for answer in ("yes", "no"):
+                        if fallback.get(answer) not in expects:
+                            err(f"{name}: fallback.{answer} не указывает на намерение из expects")
+                    if not fallback.get("buttons"):
+                        err(f"{name}: у binary fallback нет кнопок")
+                    if not _variants(fallback.get("give_up")):
+                        err(f"{name}: у binary fallback нет прощального текста give_up")
+
+        decision = node.get("decision")
+        if decision:
+            values = decision.get("values", {})
+            if set(values) != set(expects):
+                err(f"{name}: decision.values должны покрывать все намерения expects")
+
+    # --- достижимость ------------------------------------------------------------
+    reachable: set[str] = set()
+    stack = [start]
+    while stack:
+        current = stack.pop()
+        if current in reachable or current not in nodes:
+            continue
+        reachable.add(current)
+        stack.extend(edges.get(current, ()))
+    for name in nodes:
+        if name not in reachable:
+            err(f"узел {name} недостижим из {start}")
+
+    # --- завершение серии --------------------------------------------------------
+    if not any(nodes[n].get("complete") for n in reachable):
+        err("в сценарии нет достижимого узла с complete=true")
+
+    # --- циклы по auto_next (бесконечное автопроигрывание) -----------------------
+    for name in nodes:
+        seen: set[str] = set()
+        current: str | None = name
+        while current:
+            if current in seen:
+                err(f"цикл auto_next через узел {current}")
+                break
+            seen.add(current)
+            current = nodes.get(current, {}).get("auto_next")
+
+    # --- длина самой длинной цепочки озвучки -------------------------------------
+    for name in nodes:
+        total = 0
+        current = name
+        guard: set[str] = set()
+        while current and current in nodes and current not in guard:
+            guard.add(current)
+            n = nodes[current]
+            total += _max_len(n.get("say")) + _max_len(n.get("ask")) + 2
+            current = n.get("auto_next")
+        # к цепочке могут добавиться префикс fallback / приветствие при возвращении
+        extra = max(
+            _max_len(nodes[name].get("fallback", {}).get("say")),
+            _max_len(texts.get("resume_prefix")) + _max_len(nodes[name].get("resume")),
+            _max_len(texts.get("help")) + _max_len(nodes[name].get("ask")),
+        )
+        if total > MAX_CHAIN_TEXT:
+            err(f"цепочка с началом в {name} может превысить {MAX_CHAIN_TEXT} символов ({total})")
+        if extra + _max_len(nodes[name].get("ask")) > MAX_CHAIN_TEXT:
+            err(f"узел {name}: служебный ответ может превысить {MAX_CHAIN_TEXT} символов")
+
+    # fallback advance: префикс + цепочка от целевого узла
+    for name, node in nodes.items():
+        fb = node.get("fallback")
+        if fb and fb.get("type") == "advance" and fb.get("to") in nodes:
+            total = _max_len(fb.get("say"))
+            current = fb["to"]
+            guard = set()
+            while current and current in nodes and current not in guard:
+                guard.add(current)
+                total += _max_len(nodes[current].get("say")) + _max_len(nodes[current].get("ask")) + 2
+                current = nodes[current].get("auto_next")
+            if total > MAX_CHAIN_TEXT:
+                err(f"{name}: fallback-цепочка может превысить {MAX_CHAIN_TEXT} символов ({total})")
+
+    return errors
+
+
+def validate_content(data: dict) -> list[str]:
+    errors: list[str] = []
+    episodes = data.get("episodes")
+    if not isinstance(episodes, dict) or not episodes:
+        return ["в сценарии нет раздела episodes"]
+    for episode_id, ep in episodes.items():
+        errors.extend(validate_episode(episode_id, ep))
+    return errors
