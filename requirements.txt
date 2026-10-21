@@ -1,0 +1,8 @@
+# Версии, на которых фактически прогнаны тесты (Python 3.13, Linux).
+fastapi==0.151.0
+uvicorn==0.54.0
+SQLAlchemy==2.1.5
+pydantic==2.14.1
+python-dotenv==1.2.4
+httpx==0.28.1
+pytest==9.1.1
