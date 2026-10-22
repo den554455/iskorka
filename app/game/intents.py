@@ -86,7 +86,14 @@ STREAM_WORDS = frozenset(
 
 PLACE_INTENTS = {"garden": GARDEN_WORDS, "stream": STREAM_WORDS}
 
-KNOWN_INTENTS = frozenset({"yes", "no", "garden", "stream", "replay"})
+TREE_WORDS = frozenset(
+    "дерево дерева дереву дереве деревом деревья деревьев деревьям деревьями "
+    "дуб дуба дубу дубе дубом ёлка елка ёлки елки ёлке елке ёлку елку "
+    "берёза береза берёзы березы берёзе березе берёзу березу клён клена клену клене кленом "
+    "липа липы липе липу сосна сосны сосне сосну яблоня яблони яблоне яблоню ".split()
+)
+
+KNOWN_INTENTS = frozenset({"yes", "no", "garden", "stream", "replay", "tree"})
 
 
 def is_exit(text: str) -> bool:
@@ -144,4 +151,7 @@ def classify(text: str, wanted: list[str]) -> list[str]:
             found.append(intent)
     if "replay" in wanted and _any_phrase(text, REPLAY_PHRASES):
         found.append("replay")
+    # «дерево» ищется как целое слово: ё уже заменена на е при нормализации.
+    if "tree" in wanted and any(token in TREE_WORDS for token in text.split()):
+        found.append("tree")
     return found

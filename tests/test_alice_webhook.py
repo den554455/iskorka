@@ -28,7 +28,7 @@ def test_valid_first_request_returns_greeting_in_protocol_format(client):
 
 
 def test_full_dialogue_over_http(client):
-    steps = [("", True), ("да", False), ("да", False), ("ыыы", False), ("в саду", False)]
+    steps = [("", True), ("да", False), ("да", False), ("дерево", False), ("в саду", False)]
     last = None
     for i, (text, new) in enumerate(steps):
         last = post(client, alice_payload(text, message_id=i, new=new)).json()["response"]
@@ -106,7 +106,8 @@ def test_unknown_command_is_handled_softly(client):
     post(client, alice_payload("", message_id=0, new=True))
     post(client, alice_payload("да", message_id=1))
     post(client, alice_payload("да", message_id=2))
-    r = post(client, alice_payload("квантовая гравитация", message_id=3)).json()["response"]
+    post(client, alice_payload("дерево", message_id=3))  # отгадали загадку -> вопрос про место
+    r = post(client, alice_payload("квантовая гравитация", message_id=4)).json()["response"]
     assert r["end_session"] is False
     assert mentions_both_places(r["text"])
 

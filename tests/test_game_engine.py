@@ -33,16 +33,35 @@ def test_intro_yes_finds_seed_and_meets_tisha(engine):
 
 
 @pytest.mark.parametrize("answer,first", [("да", "LISTEN_YES"), ("нет", "LISTEN_NO")])
-def test_listen_scene_leads_to_place_choice(engine, answer, first):
+def test_listen_scene_leads_to_riddle(engine, answer, first):
     r = engine.step(ctx("LISTEN", turn=2), answer)
-    assert r.path == [first, "CHOOSE_PLACE"]
+    assert r.path == [first, "RIDDLE"]
+    assert r.node == "RIDDLE" and r.buttons == ["Подскажи", "Не знаю"]
+    assert r.decision is None and r.unlocks == [] and not r.end_session
+
+
+def test_riddle_correct_answer_walks_to_place_choice(engine):
+    r = engine.step(ctx("RIDDLE", turn=3), "дерево")
+    assert r.path == ["RIDDLE_OK", "WALK", "CHOOSE_PLACE"]
     assert r.node == "CHOOSE_PLACE" and r.buttons == ["В саду", "У ручья"]
     assert r.decision is None and r.unlocks == [] and not r.end_session
 
 
-def test_listen_unclear_advances_to_choice_without_blocking(engine):
+def test_riddle_wrong_answer_gets_gentle_reask_and_keeps_state(engine):
+    r = engine.step(ctx("RIDDLE", turn=3), "динозавр")
+    assert r.kind == "unclear" and r.node == "RIDDLE"
+    assert r.unclear_count == 1
+    assert not r.end_session and r.decision is None
+
+
+def test_riddle_unclear_advances_to_reveal_without_blocking(engine):
+    r = engine.step(ctx("RIDDLE", unclear_count=2), "ыыы")
+    assert r.path[0] == "RIDDLE_REVEAL" and r.node == "CHOOSE_PLACE"
+
+
+def test_listen_unclear_advances_to_riddle_without_blocking(engine):
     r = engine.step(ctx("LISTEN", unclear_count=2), "ыыы")
-    assert r.path[0] == "CHOOSE_PLACE" and r.node == "CHOOSE_PLACE"
+    assert r.path[0] == "RIDDLE" and r.node == "RIDDLE"
 
 
 def test_intro_no_ends_politely_and_keeps_state(engine):
