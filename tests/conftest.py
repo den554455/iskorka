@@ -1,4 +1,5 @@
 from __future__ import annotations
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19,12 +20,12 @@ def episode() -> dict:
 
 
 @pytest.fixture
-def engine(episode) -> Engine:
+def engine(episode: dict) -> Engine:
     return Engine(episode)
 
 
 @pytest.fixture
-def db(tmp_path) -> Database:
+def db(tmp_path: Path) -> Database:
     database = Database(f"sqlite:///{tmp_path / 'test.db'}")
     database.create_schema()
     yield database
@@ -32,12 +33,12 @@ def db(tmp_path) -> Database:
 
 
 @pytest.fixture
-def service(db, engine) -> GameService:
+def service(db: Database, engine: Engine) -> GameService:
     return GameService(db, engine, PEPPER)
 
 
 @pytest.fixture
-def client(tmp_path):
+def client(tmp_path: Path):
     settings = Settings(
         database_url=f"sqlite:///{tmp_path / 'web.db'}", player_key_pepper=PEPPER, max_body_bytes=4096
     )
