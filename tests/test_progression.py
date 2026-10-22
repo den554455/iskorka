@@ -25,7 +25,8 @@ def profile_of(db, player_id: str) -> Profile:
 def play_to_choice(p: Player) -> None:
     p.say("")  # приветствие
     p.say("да")  # согласие помочь -> находка семечка, вопрос «послушаем?»
-    p.say("да")  # послушали семечко -> вопрос про место
+    p.say("да")  # послушали семечко -> загадка Тиши
+    p.say("дерево")  # отгадали загадку -> прогулка по долине и вопрос про место
 
 
 # --- создание профиля -------------------------------------------------------------
@@ -56,9 +57,13 @@ def test_full_episode_garden_end_to_end(service, db):
     assert "Искорка" in first.text and not first.end_session
     second = p.say("да")
     assert "Тиша" in second.text and not second.end_session
-    listen = p.say("да")  # послушали семечко
+    listen = p.say("да")  # послушали семечко -> загадка Тиши
     assert "семечк" in listen.text and not listen.end_session
-    wrong = p.say("динозавр")
+    riddle_wrong = p.say("динозавр")  # неверная отгадка — мягкий переспрос
+    assert not riddle_wrong.end_session and "Кто это" in riddle_wrong.text
+    riddle = p.say("дерево")  # отгадали -> вопрос про место
+    assert not riddle.end_session and mentions_both_places(riddle.text)
+    wrong = p.say("бульдозер")
     assert not wrong.end_session and mentions_both_places(wrong.text)
     hint = p.say("подскажи")
     assert "ручей" in hint.text or "ручья" in hint.text
@@ -90,6 +95,8 @@ def test_episode_passable_with_loose_answers_and_simplified_help(service, db):
     for _ in range(3):  # reask, hint, сюжет двигается сам: ребёнок попадает к вопросу про семечко
         p.say("мммм")
     for _ in range(3):  # то же на вопросе «послушаем семечко?»
+        p.say("мммм")
+    for _ in range(3):  # то же на загадке Тиши: игра сама раскрывает ответ и ведёт к выбору
         p.say("мммм")
     choice_prompts = [p.say("мммм").text for _ in range(3)]  # reask, hint, binary
     assert "«да»" in choice_prompts[-1] and "«нет»" in choice_prompts[-1]
@@ -181,22 +188,22 @@ def test_first_decision_is_not_overwritten(service, db):
 
 def test_duplicate_request_returns_same_answer_and_no_double_reward(service, db):
     p = Player(service)
-    play_to_choice(p)
+    play_to_choice(p)  # сообщения 0..3, последний ход — ответ на загадку
     kwargs = dict(player_id="player-1", session_id="s1", utterance="сад", new_session=False)
-    first = service.handle_turn(message_id=3, **kwargs)
-    again = service.handle_turn(message_id=3, **kwargs)  # повтор после тайм-аута
+    first = service.handle_turn(message_id=4, **kwargs)
+    again = service.handle_turn(message_id=4, **kwargs)  # повтор после тайм-аута
     assert again.replayed and again.text == first.text
     assert rows(db, WorldItem) == 1 and rows(db, Decision) == 1 and rows(db, EpisodeProgress) == 1
 
 
 def test_duplicate_with_different_utterance_cannot_overwrite_choice(service, db):
     p = Player(service)
-    play_to_choice(p)
+    play_to_choice(p)  # сообщения 0..3
     service.handle_turn(
-        player_id="player-1", session_id="s1", message_id=3, utterance="сад", new_session=False
+        player_id="player-1", session_id="s1", message_id=4, utterance="сад", new_session=False
     )
     late = service.handle_turn(
-        player_id="player-1", session_id="s1", message_id=3, utterance="ручей", new_session=False
+        player_id="player-1", session_id="s1", message_id=4, utterance="ручей", new_session=False
     )
     assert late.replayed
     with db.session_scope() as s:
@@ -205,10 +212,10 @@ def test_duplicate_with_different_utterance_cannot_overwrite_choice(service, db)
 
 def test_stale_out_of_order_request_is_not_reprocessed(service, db):
     p = Player(service)
-    play_to_choice(p)  # message_id 0 и 1
-    p.say("сад")  # 2
+    play_to_choice(p)  # message_id 0..3
+    p.say("сад")  # 4
     stale = service.handle_turn(
-        player_id="player-1", session_id="s1", message_id=2, utterance="да", new_session=False
+        player_id="player-1", session_id="s1", message_id=4, utterance="да", new_session=False
     )
     assert stale.replayed
     assert rows(db, WorldItem) == 1
@@ -246,12 +253,16 @@ def test_unique_constraints_block_duplicates_at_db_level(service, db):
     play_to_choice(p)
     p.say("сад")
     prof = profile_of(db, "player-1")
+    # награда уже сохранена через INSERT ... ON CONFLICT DO NOTHING (дублей нет);
+    # прямой повторный INSERT с теми же ключами блокируется уникальным индексом
     with pytest.raises(IntegrityError):
         with db.session_scope() as s:
             s.add(WorldItem(profile_id=prof.id, item_key="garden_flower", episode_id="ep1"))
+            s.flush()  # flush поднимает IntegrityError внутри открытой транзакции
     with pytest.raises(IntegrityError):
         with db.session_scope() as s:
             s.add(Decision(profile_id=prof.id, episode_id="ep1", key="seed_place", value="stream"))
+            s.flush()
 
 
 def test_foreign_keys_are_enforced(db):
