@@ -34,6 +34,59 @@ class Database:
 
     def create_schema(self) -> None:
         Base.metadata.create_all(self.engine)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Простые миграции при старте для SQLite в /data (см. SPEC_STORY, раздел «Миграции БД»).
+
+        1. profiles.episodes_started — мягкий ограничитель числа эпизодов за визит.
+        2. decisions: UNIQUE(profile_id, episode_id, key) -> UNIQUE(profile_id, key),
+           чтобы решение не перезаписывалось даже при повторном прохождении эпизода.
+        """
+        if self.engine.dialect.name != "sqlite":
+            return
+        with self.engine.begin() as conn:
+            columns = {
+                row[1] for row in conn.exec_driver_sql("PRAGMA table_info(profiles)")
+            }
+            if "episodes_started" not in columns:
+                conn.exec_driver_sql(
+                    "ALTER TABLE profiles ADD COLUMN episodes_started INTEGER NOT NULL DEFAULT 0"
+                )
+
+            indexes = {
+                row[1] for row in conn.exec_driver_sql("PRAGMA index_list(decisions)")
+            }
+            needs_rebuild = any("episode_id" in (idx or "") for idx in indexes)
+            if not needs_rebuild:
+                # старые БД: проверка по списку колонок уникального ограничения
+                ddl = conn.exec_driver_sql(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name='decisions'"
+                ).scalar()
+                needs_rebuild = ddl is not None and "episode_id" in ddl and "UNIQUE" in ddl.upper()
+            if needs_rebuild:
+                conn.exec_driver_sql(
+                    """
+                    CREATE TABLE decisions_new (
+                        id INTEGER NOT NULL PRIMARY KEY,
+                        profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+                        episode_id VARCHAR(32) NOT NULL,
+                        key VARCHAR(48) NOT NULL,
+                        value VARCHAR(48) NOT NULL,
+                        created_at DATETIME NOT NULL,
+                        UNIQUE (profile_id, key)
+                    )
+                    """
+                )
+                conn.exec_driver_sql(
+                    """
+                    INSERT INTO decisions_new (id, profile_id, episode_id, key, value, created_at)
+                    SELECT id, profile_id, episode_id, key, value, created_at
+                    FROM decisions ORDER BY id
+                    """
+                )
+                conn.exec_driver_sql("DROP TABLE decisions")
+                conn.exec_driver_sql("ALTER TABLE decisions_new RENAME TO decisions")
 
     @contextmanager
     def session_scope(self) -> Iterator[Session]:

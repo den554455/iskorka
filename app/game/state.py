@@ -17,6 +17,7 @@ class GameContext:
     items: set[str] = field(default_factory=set)
     met: set[str] = field(default_factory=set)
     completed: bool = False
+    episodes_started: int = 0  # сколько эпизодов начато в этом профиле (для мягкого ограничителя)
 
 
 @dataclass
@@ -26,7 +27,7 @@ class TurnResult:
     text: str
     buttons: list[str]
     end_session: bool
-    kind: str  # story | resume | help | about | hint | repeat | unclear | exit | danger | end
+    kind: str  # story | resume | help | about | hint | repeat | unclear | exit | danger | end | next_episode
     node: str  # узел, который нужно сохранить после хода
     unclear_count: int
     turn: int
@@ -35,3 +36,4 @@ class TurnResult:
     meets: list[str] = field(default_factory=list)
     completed: bool = False
     path: list[str] = field(default_factory=list)  # пройденные узлы (для тестов и отладки)
+    next_episode_id: str | None = None  # если ход запускает следующий эпизод (смена профиля)

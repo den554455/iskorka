@@ -74,6 +74,13 @@ REPLAY_PHRASES = (
     "что выросло", "хочу узнать",
 )
 
+# Продолжить историю: следующий эпизод (кнопка «Слушать дальше» и свободные фразы).
+NEXT_EPISODE_PHRASES = (
+    "дальше", "слушать дальше", "следующий эпизод", "следующая история", "продолжим",
+    "продолжай", "продолжать", "еще историю", "новую историю", "хочу еще", "давай дальше",
+    "пойдем дальше", "идем дальше", "что дальше",
+)
+
 GARDEN_WORDS = frozenset(
     "сад саду сада садик садику садика садике садом садах садики клумба клумбе клумбу "
     "клумбы огород огороде огорода".split()
@@ -93,7 +100,35 @@ TREE_WORDS = frozenset(
     "липа липы липе липу сосна сосны сосне сосну яблоня яблони яблоне яблоню ".split()
 )
 
-KNOWN_INTENTS = frozenset({"yes", "no", "garden", "stream", "replay", "tree"})
+# --- Эпизод 2: как нести светлячка и как его назвать -------------------------
+
+LEAF_WORDS = frozenset(
+    "листик листике листика листиком листочек листочке листочку листочки "
+    "лист листе листа листом листья листьях листочками".split()
+)
+HANDS_WORDS = frozenset(
+    "ладошки ладошках ладошку лапки лапках лапку руки руках ручку "
+    "ручки ладонь ладони ладонях долоньки долоньках".split()
+)
+SPARK_WORDS = frozenset("искра искре искру искрой".split())
+GLITTER_WORDS = frozenset(
+    "блёстка блестка блёстке блестке блёстку блестку блёсткой блесткой блёстки блестки".split()
+)
+STAR_WORDS = frozenset(
+    "звездочка звездочке звездочку звездочкой звездочки звезда звезде звезду звездой".split()
+)
+
+WORD_INTENTS = {
+    "leaf": LEAF_WORDS,
+    "hands": HANDS_WORDS,
+    "spark": SPARK_WORDS,
+    "glitter": GLITTER_WORDS,
+    "star": STAR_WORDS,
+}
+
+KNOWN_INTENTS = frozenset(
+    {"yes", "no", "garden", "stream", "replay", "tree", "next"} | set(WORD_INTENTS)
+)
 
 
 def is_exit(text: str) -> bool:
@@ -154,4 +189,15 @@ def classify(text: str, wanted: list[str]) -> list[str]:
     # «дерево» ищется как целое слово: ё уже заменена на е при нормализации.
     if "tree" in wanted and any(token in TREE_WORDS for token in text.split()):
         found.append("tree")
+    # Слова-ответы новых эпизодов («в листике», «Искра»): тоже целые слова, без отрицания.
+    tokens = text.split()
+    for intent, words in WORD_INTENTS.items():
+        if intent in wanted and any(
+            token in words and "не" not in tokens[max(0, i - 2):i]
+            for i, token in enumerate(tokens)
+        ):
+            found.append(intent)
+    # Кнопка «Слушать дальше» / фраза «следующий эпизод» — согласие продолжить историю.
+    if "next" in wanted and ("дальше" in tokens or _any_phrase(text, NEXT_EPISODE_PHRASES)):
+        found.append("next")
     return found
