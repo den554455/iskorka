@@ -44,12 +44,11 @@ class Repository:
         return self.s.scalar(select(Profile).where(Profile.player_key == player_key))
 
     def load_context(self, profile: Profile) -> GameContext:
+        # Решения берём из всех эпизодов: обратные ссылки поздних эпизодов читают ранние выборы.
         decisions = {
             d.key: d.value
             for d in self.s.scalars(
-                select(Decision).where(
-                    Decision.profile_id == profile.id, Decision.episode_id == profile.episode_id
-                )
+                select(Decision).where(Decision.profile_id == profile.id).order_by(Decision.id)
             )
         }
         items = set(
@@ -80,6 +79,7 @@ class Repository:
             items=items,
             met=met,
             completed=completed,
+            episodes_started=profile.episodes_started,
         )
 
     # ------------------------------------------------------------------ применение хода
@@ -123,6 +123,10 @@ class Repository:
         profile.node = result.node
         profile.unclear_count = result.unclear_count
         profile.turn = result.turn
+        if result.next_episode_id:
+            # Переход между эпизодами: профиль переключается на новый эпизод (пункт 3 спецификации).
+            profile.episode_id = result.next_episode_id
+            profile.episodes_started += 1
         profile.last_session_id = session_id
         profile.last_message_id = message_id
         profile.last_response = response_json

@@ -9,6 +9,14 @@
       ],
       "default": "garden"
     },
+    "carry_way": {
+      "episode": "ep2",
+      "values": [
+        "leaf",
+        "hands"
+      ],
+      "default": "hands"
+    },
     "firefly_name": {
       "episode": "ep2",
       "values": [
@@ -172,11 +180,11 @@
     },
     "kap": {
       "name": "Кап",
-      "gender_rule": "мужской род (щенок)"
+      "gender_rule": "маленький дух ручья, говорит тихо, с «кап-кап»"
     },
     "hranitel": {
-      "name": "Хранитель тумана",
-      "gender_rule": "мужской род"
+      "name": "Хранитель историй",
+      "gender_rule": "выросший светлячок из эпизода 2, тёплый шёпот"
     }
   }
 }

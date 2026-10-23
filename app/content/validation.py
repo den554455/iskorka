@@ -114,6 +114,12 @@ def validate_episode(episode_id: str, ep: dict) -> list[str]:
         if node.get("end_session") and expects:
             err(f"{name}: узел завершения сессии не должен ждать ответа")
 
+        if node.get("next_episode"):
+            # Узел перехода между эпизодами: движок уходит в следующий эпизод или прощается.
+            if not _variants(node.get("say")):
+                err(f"{name}: узел перехода next_episode без текста")
+            continue
+
         if not node.get("auto_next") and not node.get("end_session") and not expects:
             err(f"{name}: тупик — нет ни auto_next, ни expects, ни end_session")
 

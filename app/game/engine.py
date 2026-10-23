@@ -55,6 +55,17 @@ class Engine:
         if intents.is_exit(text):
             return self._finish(ctx, turn, "exit", self._pick(self.texts["exit"], turn))
 
+        # Эпизод пройден, а ребёнок просит «ещё» — MultiEngine продолжит следующим эпизодом.
+        if ctx.completed and not new_session and "next" in self._expectations(ctx, node):
+            answer = intents.classify(text, ["yes", "no"])
+            wants_more = (
+                "yes" in answer
+                or bool(intents.classify(text, ["next"]))
+                or ("no" not in answer and intents.classify(text, list(node.get("expects", {}))))
+            )
+            if wants_more:
+                return self._transition(ctx, node, "next", turn)
+
         # Самый первый ход: ребёнок ещё ничего не слышал, приветствие важнее любой реплики.
         if ctx.node == self.start:
             return self._play(ctx, turn, self.start, kind="story")
