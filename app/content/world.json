@@ -1,0 +1,182 @@
+{
+  "version": 1,
+  "decision_keys": {
+    "seed_place": {
+      "episode": "ep1",
+      "values": [
+        "garden",
+        "stream"
+      ],
+      "default": "garden"
+    },
+    "firefly_name": {
+      "episode": "ep2",
+      "values": [
+        "spark",
+        "glitter",
+        "star"
+      ],
+      "default": "spark"
+    },
+    "hill_gift": {
+      "episode": "ep4",
+      "values": [
+        "lantern",
+        "bell"
+      ],
+      "default": "lantern"
+    },
+    "branch_color": {
+      "episode": "ep6",
+      "values": [
+        "gold",
+        "blue",
+        "green"
+      ],
+      "default": "gold"
+    },
+    "lullaby_mood": {
+      "episode": "ep8",
+      "values": [
+        "cheerful",
+        "calm"
+      ],
+      "default": "calm"
+    },
+    "echo_home": {
+      "episode": "ep10",
+      "values": [
+        "cave",
+        "stream",
+        "garden"
+      ],
+      "default": "cave"
+    },
+    "valley_song": {
+      "episode": "ep12",
+      "values": [
+        "funny",
+        "tender"
+      ],
+      "default": "funny"
+    },
+    "bridge_target": {
+      "episode": "ep14",
+      "values": [
+        "berry_field",
+        "windmill_hill"
+      ],
+      "default": "berry_field"
+    },
+    "tree_decoration": {
+      "episode": "ep16",
+      "values": [
+        "ribbon",
+        "bell",
+        "lantern"
+      ],
+      "default": "ribbon"
+    },
+    "sunset_flight": {
+      "episode": "ep18",
+      "values": [
+        "rainbow",
+        "cloud"
+      ],
+      "default": "rainbow"
+    },
+    "cloud_home": {
+      "episode": "ep20",
+      "values": [
+        "garden",
+        "stream",
+        "meadow",
+        "hill"
+      ],
+      "default": "meadow"
+    },
+    "tisha_gift": {
+      "episode": "ep22",
+      "values": [
+        "story_book",
+        "night_light",
+        "nest"
+      ],
+      "default": "story_book"
+    },
+    "bridge_rule": {
+      "episode": "ep24",
+      "values": [
+        "turns",
+        "together",
+        "swap"
+      ],
+      "default": "turns"
+    },
+    "root_story": {
+      "episode": "ep26",
+      "values": [
+        "seed",
+        "echo",
+        "bridge"
+      ],
+      "default": "seed"
+    },
+    "final_branch_tale": {
+      "episode": "ep28",
+      "values": [
+        "kindness",
+        "bravery",
+        "friendship"
+      ],
+      "default": "kindness"
+    },
+    "top_star": {
+      "episode": "ep30",
+      "values": [
+        "story_tree"
+      ],
+      "default": "story_tree"
+    }
+  },
+  "items": {
+    "garden_flower": {
+      "episode": "ep1",
+      "name": "Светящийся цветок в саду"
+    },
+    "stream_sprout": {
+      "episode": "ep1",
+      "name": "Светящийся росток у ручья"
+    },
+    "firefly": {
+      "episode": "ep2",
+      "name": "Светлячок-история в Великом дереве"
+    },
+    "first_branch": {
+      "episode": "ep6",
+      "name": "Первая ветвь Любопытства"
+    }
+  },
+  "characters": {
+    "iskorka": {
+      "name": "Искорка",
+      "gender_rule": "всегда мужской род"
+    },
+    "tisha": {
+      "name": "Тиша",
+      "gender_rule": "всегда мужской род"
+    },
+    "pugovka": {
+      "name": "Пуговка",
+      "gender_rule": "женский род (зайчиха)"
+    },
+    "kap": {
+      "name": "Кап",
+      "gender_rule": "мужской род (щенок)"
+    },
+    "hranitel": {
+      "name": "Хранитель тумана",
+      "gender_rule": "мужской род"
+    }
+  }
+}

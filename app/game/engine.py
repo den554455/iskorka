@@ -1,7 +1,8 @@
 """Игровой движок: детерминированный конечный автомат без БД и без формата Алисы.
 
-Узлы сценария лежат в episodes.json. Движок получает снимок состояния и реплику
-и возвращает TurnResult — что сказать и что изменить. Сохраняет изменения сервисный слой.
+Узлы сценария лежат в файлах `content/episodes/*.json`. Движок получает снимок состояния
+и реплику и возвращает TurnResult — что сказать и что изменить. Сохраняет изменения
+сервисный слой. Переход между эпизодами (`next`) обрабатывает мультидвижок MultiEngine.
 """
 
 from __future__ import annotations
@@ -39,6 +40,10 @@ class Engine:
         new_session: bool = False,
         dangerous: bool = False,
     ) -> TurnResult:
+        if ctx.episode_id != self.episode_id:
+            raise RuntimeError(
+                f"движок {self.episode_id} не работает с состоянием эпизода {ctx.episode_id}"
+            )
         if not self._is_resumable(ctx.node):  # сценарий изменился: возвращаемся в безопасную точку
             ctx = replace(ctx, node="EPISODE_COMPLETE" if ctx.completed else self.start)
         turn = ctx.turn + 1
@@ -110,6 +115,11 @@ class Engine:
     # ------------------------------------------------------------------ переходы
 
     def _transition(self, ctx: GameContext, node: dict, intent: str, turn: int) -> TurnResult:
+        # Переход в следующий эпизод обрабатывает MultiEngine; одиночный движок до него не доходит.
+        if self.nodes[node["expects"][intent]].get("next_episode"):
+            return self._finish(
+                replace(ctx, unclear_count=0), turn, "end", self._pick(node.get("reask"), turn)
+            )
         decision = None
         decisions = dict(ctx.decisions)
         decision_cfg = node.get("decision")
@@ -276,3 +286,88 @@ class Engine:
     @staticmethod
     def _join(parts: list[str]) -> str:
         return " ".join(p.strip() for p in parts if p and p.strip())
+
+
+class MultiEngine:
+    """Набор движков по одному на эпизод + переход `next` между ними (пункт 3 спецификации).
+
+    Интерфейс совпадает с Engine (`new_context`, `step`), поэтому GameService не знает,
+    сколько эпизодов под капотом. Переход в следующий эпизод — это новый снимок состояния:
+    `episode_id` меняется на следующий, а `node` — на его стартовый узел. Все решения
+    игрока остаются в БД и доступны новому эпизоду как обратные ссылки.
+    """
+
+    # Мягкий ограничитель (открытый вопрос 4): не больше эпизодов за один визит.
+    EPISODES_PER_SESSION = 2
+
+    PAUSE_TEXT = [
+        "Мы сегодня уже побывали в двух сериях — целое приключение! Давай отдохнём: "
+        "долина никуда не денется, а Искорка будет ждать тебя в следующий раз. До встречи!",
+        "Здорово получилось! Но сказке нужен перерыв, чтобы чудеса успели улечься. "
+        "Приходи завтра — и мы продолжим прямо с нового эпизода. До встречи!",
+        "Хватит на сегодня, а? Искорка укроет семечко и светлячка, а ты расскажешь взрослому, "
+        "что было в долине. В следующий раз узнаем, что скрипит за холмом. До встречи!",
+    ]
+    NO_NEXT_TEXT = [
+        "Новая серия ещё сочиняется для тебя. А пока Искорка будет ждать у Великого дерева. До встречи!",
+        "Продолжение скоро появится! Отдыхай, а когда захочешь — возвращайся, и мы продолжим.",
+    ]
+
+    def __init__(self, engines: dict[str, Engine], first_episode_id: str, order: list[str] | None = None) -> None:
+        self.engines = engines
+        self.first_episode_id = first_episode_id
+        self.order = order or list(engines)
+
+    def new_context(self) -> GameContext:
+        return self.engines[self.first_episode_id].new_context()
+
+    def engine_for(self, episode_id: str) -> Engine:
+        engine = self.engines.get(episode_id)
+        if engine is None:
+            # профиль указывает на недоступный эпизод — безопасно возвращаемся к первому
+            engine = self.engines[self.first_episode_id]
+        return engine
+
+    def next_episode_id(self, episode_id: str) -> str | None:
+        if episode_id not in self.order:
+            return None
+        index = self.order.index(episode_id)
+        if index + 1 >= len(self.order):
+            return None
+        candidate = self.order[index + 1]
+        return candidate if candidate in self.engines else None
+
+    def step(
+        self,
+        ctx: GameContext,
+        utterance: str | None,
+        new_session: bool = False,
+        dangerous: bool = False,
+    ) -> TurnResult:
+        engine = self.engine_for(ctx.episode_id)
+        result = engine.step(
+            replace(ctx, episode_id=engine.episode_id), utterance, new_session, dangerous
+        )
+        if "NEXT_EPISODE" not in result.path:
+            return result
+
+        nxt = self.next_episode_id(engine.episode_id)
+        turn = result.turn
+        if nxt is None:
+            text = Engine._pick(self.NO_NEXT_TEXT, turn)
+            return replace(
+                result, text=text, buttons=[], end_session=True,
+                kind="end", node=result.node, next_episode_id=None,
+            )
+        if ctx.episodes_started >= self.EPISODES_PER_SESSION:
+            text = Engine._pick(self.PAUSE_TEXT, turn)
+            return replace(
+                result, text=text, buttons=[], end_session=True,
+                kind="pause", node=result.node, next_episode_id=None,
+            )
+        target = self.engines[nxt]
+        prefix = target.new_context()
+        prefix.turn = turn
+        prefix.episodes_started = ctx.episodes_started + 1
+        started = target.step(prefix, "", new_session=False)
+        return replace(started, next_episode_id=nxt)

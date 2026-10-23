@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.game.intents import KNOWN_INTENTS
@@ -11,6 +12,21 @@ MAX_TEXT = 1024
 MAX_CHAIN_TEXT = 960
 MAX_BUTTON_TITLE = 64
 FALLBACK_TYPES = {"advance", "binary", "end"}
+
+# Обращения к ребёнку в прошедшем времени на «ты» выдают род (правило 17 «Правил написания»).
+# Проверка намеренно широкая: ловим «ты <слово>», где слово оканчивается на мужское окончание
+# причастия/прилагательного или глагола прошедшего времени.
+GENDERED_RE = re.compile(
+    r"\b(ты|ты\s+)[а-яёa-z]+(лся|лась|лось|ла|ло|л)\b", re.IGNORECASE
+)
+GENDERED_PATTERNS = (
+    # устойчивые обращения из правила 17; проверяются как подстроки словосочетаний
+    ("вернулся", "«ты вернулся» выдаёт род — пишите «вот и вы»"),
+    ("догадался", "«ты догадался» выдаёт род — пишите «догадались?»"),
+    ("поумнел", "выдаёт род"),
+    ("смелым", "выдаёт род"),
+    ("одним из вас был прав", "выдаёт число"),
+)
 
 
 def _variants(value: Any) -> list[str]:
@@ -29,6 +45,23 @@ def _max_len(value: Any) -> int:
     return max((len(v) for v in _variants(value)), default=0)
 
 
+def _gendered_problem(text: str) -> list[str]:
+    """Находит обращения к ребёнку, выдающие род или число (правило 17)."""
+    problems: list[str] = []
+    if not isinstance(text, str):
+        return problems
+    low = text.lower()
+    for word, note in GENDERED_PATTERNS:
+        if f" ты {word}" in low or f"ты {word}" in low:
+            problems.append(note)
+    # «ты <причастие/глагол м.р. прош. вр.» — только когда обращение стоит рядом со словом «ты»
+    for match in re.finditer(r"ты\s+([а-яё]+)(лся|лась|лось|ла|ло)\b", low):
+        stem = match.group(1)
+        if stem in ("вернул", "догадал", "остал", "услышал", "попал", "выбрал", "помог"):
+            problems.append(f"«ты {stem}{match.group(2)}» выдаёт род (правило 17)")
+    return list(dict.fromkeys(problems))
+
+
 def validate_episode(episode_id: str, ep: dict) -> list[str]:
     errors: list[str] = []
     nodes: dict = ep.get("nodes", {})
@@ -45,6 +78,10 @@ def validate_episode(episode_id: str, ep: dict) -> list[str]:
     for key in ("help", "about", "exit", "resume_prefix", "danger"):
         if not texts.get(key):
             err(f"texts.{key} отсутствует или пуст")
+
+    for key, value in texts.items():
+        for problem in _gendered_problem(" ".join(_variants(value))):
+            err(f"texts.{key}: {problem}")
 
     # --- ссылки между узлами и обязательные поля -------------------------------
     edges: dict[str, set[str]] = {name: set() for name in nodes}
@@ -86,6 +123,13 @@ def validate_episode(episode_id: str, ep: dict) -> list[str]:
                     err(f"{name}.{field}: пустой вариант текста")
                 elif len(text) > MAX_TEXT:
                     err(f"{name}.{field}: вариант длиннее {MAX_TEXT} символов")
+
+        # Правило 17: не обращаемся к ребёнку в прошедшем времени на «ты».
+        for field in ("say", "ask", "resume", "reask", "hint"):
+            for text in _variants(node.get(field)):
+                for problem in _gendered_problem(text):
+                    err(f"{name}.{field}: {problem}")
+
 
         if "by_decision" in node:
             for field in ("say", "resume"):
@@ -203,4 +247,57 @@ def validate_content(data: dict) -> list[str]:
         return ["в сценарии нет раздела episodes"]
     for episode_id, ep in episodes.items():
         errors.extend(validate_episode(episode_id, ep))
+    return errors
+
+
+def _decision_keys_used(episodes: dict) -> dict[str, set[str]]:
+    """Все ключи решений, которые встречаются в эпизодах, и значения по умолчанию."""
+    used: dict[str, set[str]] = {}
+    for ep in episodes.values():
+        for node in ep.get("nodes", {}).values():
+            decision = node.get("decision")
+            if decision and decision.get("key"):
+                used.setdefault(decision["key"], set()).update(decision.get("values", {}).values())
+            if node.get("by_decision"):
+                used.setdefault(node["by_decision"], set())
+    return used
+
+
+def validate_world(episodes: dict, world: dict, series: dict | None = None) -> list[str]:
+    """Реестр мира: все ключи решений объявлены, у ссылок есть `_default`, связность серий."""
+    errors: list[str] = []
+    declared = set(world.get("decision_keys", {}))
+
+    for key in _decision_keys_used(episodes):
+        if key not in declared:
+            errors.append(f"[world] ключ решения {key!r} не объявлен в world.json")
+
+    for episode_id, ep in episodes.items():
+        for name, node in ep.get("nodes", {}).items():
+            by = node.get("by_decision")
+            if not by:
+                continue
+            for field in ("say", "resume"):
+                value = node.get(field)
+                if isinstance(value, dict) and "_default" not in value:
+                    errors.append(f"[{episode_id}] {name}.{field}: нет варианта _default для {by!r}")
+
+    order = [eid for arc in series.get("arcs", []) for eid in arc.get("episodes", [])] if series else []
+    seen: set[str] = set()
+    for eid in order:
+        if eid not in episodes:
+            continue  # эпизод ещё не написан — это не ошибка сборки
+        if eid in seen:
+            errors.append(f"[series] эпизод {eid} встречается в порядке дважды")
+        seen.add(eid)
+        prev = episodes[eid].get("prev")
+        index = order.index(eid)
+        expected_prev = order[index - 1] if index > 0 else None
+        if prev != expected_prev:
+            errors.append(
+                f"[series] {eid}: prev={prev!r} не совпадает с порядком арки (ожидалось {expected_prev!r})"
+            )
+    for eid in episodes:
+        if eid not in order:
+            errors.append(f"[series] эпизод {eid} не включён ни в одну арку series.json")
     return errors
