@@ -244,16 +244,16 @@ class Engine:
             meets += effects.get("meet", [])
             # Сессию закрываем только на явном end_session. Узел с complete=true и expects
             # — это хаб завершения: он прощается в следующей реплике («ещё» / «нет»),
-            # поэтому гасит и end_session у предшественника (FINALE), и собственный флаг
-            # complete: завершённым эпизод делает следующий ответ ребёнка (RECAP/BYE) или
-            # переход к новой серии. Без этого сервис закрыл бы сессию сразу после финала,
-            # не дав ребёнку выбрать продолжение.
+            # поэтому гасит end_session у предшественника (FINALE). Флаг complete при этом
+            # остаётся: эпизод фактически пройден (решение принято, награды выданы), и БД
+            # должен зафиксировать это уже сейчас — иначе падение процесса между финалом и
+            # ответом в хабе потеряло бы прогресс. Сам хаб остаётся resumable-точкой, а
+            # переход к новой серии возможен и в новом визите (ctx.completed из БД).
             if node.get("expects"):
                 end_session = False
-                completed = False
             else:
                 end_session = end_session or bool(node.get("end_session"))
-                completed = completed or bool(node.get("complete"))
+            completed = completed or bool(node.get("complete"))
             if node.get("expects"):
                 persisted = name
                 buttons = list(node.get("buttons", []))

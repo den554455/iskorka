@@ -76,11 +76,14 @@ def test_validator_detects_auto_next_cycle(episode):
 
 
 def test_validator_detects_missing_completion(episode):
-    # FINALE теряет complete, а хаб EPISODE_COMPLETE — end_session: достижимого финала нет.
+    # Убираем все end_session-узлы и complete у реальных финалов (FINALE без expects).
+    # Хаб EPISODE_COMPLETE остаётся complete+expects — по новому контракту такой узел
+    # финалом не считается, и валидатор обязан это подтвердить.
     def mutate(ep):
-        ep["nodes"]["FINALE"].update(complete=False)
-        ep["nodes"]["EPISODE_COMPLETE"]["expects"] = {}
-        ep["nodes"]["EPISODE_COMPLETE"]["auto_next"] = "RECAP"
+        for node in ep["nodes"].values():
+            node.pop("end_session", None)
+            if node.get("complete") and not node.get("expects"):
+                node["complete"] = False
 
     errors = _broken(episode, mutate)
     assert any("финал" in e for e in errors)
