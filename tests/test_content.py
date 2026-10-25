@@ -76,8 +76,14 @@ def test_validator_detects_auto_next_cycle(episode):
 
 
 def test_validator_detects_missing_completion(episode):
-    errors = _broken(episode, lambda ep: ep["nodes"]["FINALE"].update(complete=False))
-    assert any("complete" in e for e in errors)
+    # FINALE теряет complete, а хаб EPISODE_COMPLETE — end_session: достижимого финала нет.
+    def mutate(ep):
+        ep["nodes"]["FINALE"].update(complete=False)
+        ep["nodes"]["EPISODE_COMPLETE"]["expects"] = {}
+        ep["nodes"]["EPISODE_COMPLETE"]["auto_next"] = "RECAP"
+
+    errors = _broken(episode, mutate)
+    assert any("финал" in e for e in errors)
 
 
 def test_validator_detects_dead_end(episode):
