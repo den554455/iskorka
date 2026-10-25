@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from app.config import Settings
 from app.content import load_episode
 from app.db.database import Database
-from app.game.engine import Engine
+from app.game.engine import Engine, build_multi_engine
 from app.main import create_app
 from app.service import GameService
 
@@ -17,6 +17,11 @@ PEPPER = "test-pepper"
 @pytest.fixture(scope="session")
 def episode() -> dict:
     return load_episode()
+
+
+@pytest.fixture(scope="session")
+def multi_engine():
+    return build_multi_engine()
 
 
 @pytest.fixture

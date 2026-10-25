@@ -330,7 +330,8 @@
       "expects": {
         "yes": "RECAP",
         "replay": "RECAP",
-        "no": "BYE"
+        "no": "BYE",
+        "next": "NEXT_EPISODE"
       },
       "fallback": {
         "type": "end",
@@ -378,6 +379,12 @@
         "Как скажешь. Искорка подождёт новую серию вместе со светлячком. До встречи!"
       ],
       "end_session": true
+    },
+    "NEXT_EPISODE": {
+      "say": [
+        "Ура! Начинаем новую серию!"
+      ],
+      "next_episode": true
     }
   }
 }
