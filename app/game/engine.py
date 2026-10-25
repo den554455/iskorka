@@ -121,33 +121,31 @@ class Engine:
     def _recap(self, ctx: GameContext, turn: int) -> str:
         """Одно предложение «в прошлый раз», собранное из сохранённых решений и наград.
 
-        Речь ребёнка не хранится — пересказ строится только по ключам решений (`decisions`)
-        и элементам мира (`items`). Для первого эпизода (решений ещё нет) возвращаем пусто.
+        Речь ребёнка не хранится — пересказ строится только по решениям (`decisions`)
+        и наградам (`items`), которые относятся к предыдущему эпизоду (ключи и предметы
+        помечены в world.json полем `episode`). Для первого эпизода возвращаем пусто.
+
+        Дедупликация: пересказ нужен только при переходе между эпизодами внутри одного
+        визита (`episodes_started > 1`). При возвращении ребёнка в уже начатую серию
+        («с возвращением!» + resume-текст узла) история прошлого уже рассказана —
+        второй пересказ прозвучал бы дважды.
         """
-        prev = self.episode.get("prev")
-        if not prev or (not ctx.decisions and not ctx.items):
+        prev_id = self.episode.get("prev")
+        if not prev_id or ctx.episodes_started <= 1:
             return ""
-        # Решения и награды предыдущего эпизода — строим пересказ только по ним,
-        # чтобы не дублировать то, что уже скажет стартовый узел нового эпизода.
-        prev_keys = set(prev.get("decision_keys", [])) | set(prev.get("unlock_items", []))
-        lines: list[str] = []
-        seed_place = ctx.decisions.get("seed_place")
-        if seed_place is not None:
-            lines.append(
-                "вы посадили семечко в саду" if seed_place == "garden" else "вы посадили семечко у ручья"
-            )
+        if not ctx.decisions and not ctx.items:
+            return ""
+        # Фрагменты пересказа по решениям предыдущего эпизода.
+        fragments: list[str] = []
+        if ctx.decisions.get("seed_place") == "garden":
+            fragments.append("вы посадили семечко в саду")
+        elif ctx.decisions.get("seed_place") == "stream":
+            fragments.append("вы посадили семечко у ручья")
         if "firefly" in ctx.items:
-            lines.append("светлячок поселился в Великом дереве")
-        if not lines:
+            fragments.append("светлячок поселился в Великом дереве")
+        if not fragments:
             return ""
-        recap = "В прошлый раз " + ", а ещё ".join(lines) + "."
-        # Если о предыдущем эпизоде уже рассказывает стартовый текст (в нём есть «в прошлый
-        # раз» / «с тех пор»), динамический пересказ не добавляем — иначе он звучит дважды.
-        start_text = str(self.nodes.get(self.start, {}).get("say", ""))
-        low_start = start_text.lower()
-        if any(w in low_start for w in ("в прошлый раз", "с тех пор")):
-            return ""
-        return recap
+        return "В прошлый раз " + ", а ещё ".join(fragments) + "."
 
     def _with_recap(self, result: TurnResult, ctx: GameContext, turn: int) -> TurnResult:
         """Ставит пересказ «в прошлый раз» перед первым репликой нового эпизода."""
@@ -245,7 +243,14 @@ class Engine:
             unlocks += effects.get("unlock", [])
             meets += effects.get("meet", [])
             completed = completed or bool(node.get("complete"))
-            end_session = end_session or bool(node.get("end_session"))
+            # Сессию закрываем только на явном end_session. Узел с complete=true и expects
+            # — это хаб завершения: он прощается в следующей реплике («ещё» / «нет»),
+            # поэтому гасит и end_session у предшественника (FINALE): без этого ребёнок
+            # получал закрытие сессии сразу после финала и не мог выбрать продолжение.
+            if node.get("expects"):
+                end_session = False
+            else:
+                end_session = end_session or bool(node.get("end_session"))
             if node.get("expects"):
                 persisted = name
                 buttons = list(node.get("buttons", []))
@@ -256,7 +261,7 @@ class Engine:
 
         return TurnResult(
             text=self._join(parts),
-            buttons=[] if end_session else buttons,
+            buttons=[] if (end_session or completed) else buttons,
             end_session=end_session,
             kind=kind,
             node=persisted,
