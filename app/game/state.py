@@ -20,7 +20,7 @@ class GameContext:
     episodes_started: int = 0  # сколько эпизодов начато в этом профиле (для мягкого ограничителя)
 
 
-@dataclass
+@dataclass(frozen=True)
 class TurnResult:
     """Результат одного хода: что сказать и что изменить."""
 

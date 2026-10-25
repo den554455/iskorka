@@ -61,11 +61,12 @@ class Repository:
                 )
             )
         )
+        # Считаем прогресс по всем эпизодам профиля: новый визит продолжает дугу там,
+        # где ребёнок остановился, и «ещё» остаётся доступным в хабе завершения.
         completed = (
             self.s.scalar(
                 select(EpisodeProgress.completed_at).where(
                     EpisodeProgress.profile_id == profile.id,
-                    EpisodeProgress.episode_id == profile.episode_id,
                 )
             )
             is not None
@@ -127,6 +128,9 @@ class Repository:
             # Переход между эпизодами: профиль переключается на новый эпизод (пункт 3 спецификации).
             profile.episode_id = result.next_episode_id
             profile.episodes_started += 1
+        # Переход внутри одного визита: следующий ход движок должен встретить как начало
+        # новой сессии, иначе приветствие серии будет проглочено веткой resume.
+        profile.session_new = 1 if result.next_episode_id else 0
         profile.last_session_id = session_id
         profile.last_message_id = message_id
         profile.last_response = response_json
