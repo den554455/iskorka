@@ -344,6 +344,13 @@ class Engine:
             path=[ctx.node],
         )
 
+    def _transition_node(self) -> dict | None:
+        """Узел-мишень перехода `next` (например NEXT_EPISODE). MultiEngine подменяет его ответ."""
+        for node in self.nodes.values():
+            if node.get("next_episode"):
+                return node
+        return None
+
     # ------------------------------------------------------------------ тексты
 
     @staticmethod
