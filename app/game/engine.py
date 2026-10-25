@@ -264,8 +264,9 @@ class Engine:
     def _start_next(self, target: "Engine", ctx: GameContext, turn: int) -> TurnResult:
         """Начинает следующий эпизод: переносим решения и награды (пункт 3 и пункт 6 спецификации).
 
-        Динамический пересказ «в прошлый раз» добавляем только если в тексте нового эпизода
-        его ещё нет — иначе приветствие серии уже содержит свой вариант recap.
+        Стартовый узел целевого эпизода проигрывается как самый первый ход — с приветствием
+        серии и динамическим пересказом «в прошлый раз» (он же гасит двойной recap: повторный
+        пересказ в хабе завершения больше не печатается).
         """
         prefix = target.new_context()
         prefix.turn = turn
@@ -273,9 +274,7 @@ class Engine:
         prefix.decisions = dict(ctx.decisions)
         prefix.items = set(ctx.items)
         prefix.met = set(ctx.met)
-        started = target.step(prefix, "", new_session=False)
-        if not started.text.startswith("В прошлый раз"):
-            started = target._with_recap(started, prefix, turn)
+        started = target.step(prefix, None, new_session=False)
         return replace(started, kind="next_episode", next_episode_id=target.episode_id)
 
     # ------------------------------------------------------------------ вспомогательные ответы
