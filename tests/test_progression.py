@@ -29,6 +29,12 @@ def play_to_choice(p: Player) -> None:
     p.say("дерево")  # отгадали загадку -> прогулка по долине и вопрос про место
 
 
+def finish_visit(p: Player, bye: str = "нет") -> None:
+    """Проходит хаб EPISODE_COMPLETE: «нет» — попрощаться (конец визита)."""
+    out = p.say(bye)
+    assert out.end_session
+
+
 # --- создание профиля -------------------------------------------------------------
 
 
@@ -68,24 +74,26 @@ def test_full_episode_garden_end_to_end(service, db):
     hint = p.say("подскажи")
     assert "ручей" in hint.text or "ручья" in hint.text
     final = p.say("давай в садик")
-    assert final.end_session
+    assert not final.end_session  # хаб EPISODE_COMPLETE ждёт ответа («ещё» / «нет»)
 
     assert rows(db, Decision) == 1
     assert rows(db, WorldItem, item_key="garden_flower") == 1
     assert rows(db, CharacterMeeting, character_key="tisha") == 1
     assert rows(db, EpisodeProgress) == 1
     assert profile_of(db, "player-1").node == "EPISODE_COMPLETE"
+    finish_visit(p)
 
 
 def test_full_episode_stream_end_to_end(service, db):
     p = Player(service)
     play_to_choice(p)
     final = p.say("посадим у ручья")
-    assert final.end_session
+    assert not final.end_session
     with db.session_scope() as s:
         decision = s.scalars(select(Decision)).one()
         assert (decision.key, decision.value) == ("seed_place", "stream")
         assert s.scalars(select(WorldItem)).one().item_key == "stream_sprout"
+    finish_visit(p)
 
 
 def test_episode_passable_with_loose_answers_and_simplified_help(service, db):
@@ -101,9 +109,10 @@ def test_episode_passable_with_loose_answers_and_simplified_help(service, db):
     choice_prompts = [p.say("мммм").text for _ in range(3)]  # reask, hint, binary
     assert "«да»" in choice_prompts[-1] and "«нет»" in choice_prompts[-1]
     final = p.say("угу")
-    assert final.end_session
+    assert not final.end_session  # хаб EPISODE_COMPLETE ждёт ответа
     assert rows(db, EpisodeProgress) == 1
     assert rows(db, Decision) == 1
+    finish_visit(p)
 
 
 def test_endless_nonsense_never_traps_child_and_makes_no_decision(service, db):
@@ -121,8 +130,9 @@ def test_endless_nonsense_never_traps_child_and_makes_no_decision(service, db):
     p.new_session("s2")
     back = p.say("")
     assert mentions_both_places(back.text) and not back.end_session
-    assert p.say("сад").end_session
+    assert not p.say("сад").end_session  # выбор принят, эпизод пройден, открыт хаб
     assert rows(db, Decision) == 1
+    finish_visit(p)
 
 
 # --- восстановление ---------------------------------------------------------------
@@ -136,8 +146,9 @@ def test_progress_restored_in_new_session_mid_episode(service, db):
     assert back.text.startswith(("С возвращением", "Привет-привет", "Ура"))
     assert mentions_both_places(back.text)
     final = p.say("ручей")
-    assert final.end_session
+    assert not final.end_session  # хаб EPISODE_COMPLETE ждёт ответа
     assert rows(db, Decision) == 1
+    finish_visit(p)
 
 
 def test_restore_after_crash_new_service_same_database(db, engine):
@@ -148,18 +159,19 @@ def test_restore_after_crash_new_service_same_database(db, engine):
     restarted = Player(GameService(db, engine, PEPPER), session_id="s-after-restart")
     back = restarted.say("", new_session=True)
     assert "сад" in back.text
-    assert restarted.say("в саду").end_session
+    assert not restarted.say("в саду").end_session  # хаб открыт, визит ещё жив
     assert rows(db, WorldItem, item_key="garden_flower") == 1
+    finish_visit(restarted)
 
 
 def test_relaunch_after_completion_restores_world_without_new_rewards(service, db):
     p = Player(service)
     play_to_choice(p)
-    p.say("у ручья")
+    p.say("у ручья")  # эпизод пройден, ребёнок остаётся в хабе EPISODE_COMPLETE
     p.new_session("s2")
     back = p.say("")
     assert "ручь" in back.text and not back.end_session
-    recap = p.say("да")
+    recap = p.say("да")  # «да» в хабе — рассказать эту сказку ещё раз
     assert "росток" in recap.text and recap.end_session
     assert rows(db, Decision) == 1
     assert rows(db, WorldItem) == 1
@@ -177,7 +189,8 @@ def test_first_decision_is_not_overwritten(service, db):
     p.new_session("s2")
     p.say("")
     again = p.say("ручей")
-    assert again.end_session
+    assert not again.end_session  # ведём по сохранённой садовой ветке до хаба
+    finish_visit(p)
     with db.session_scope() as s:
         assert s.scalars(select(Decision)).one().value == "garden"
         assert [i.item_key for i in s.scalars(select(WorldItem))] == ["garden_flower"]

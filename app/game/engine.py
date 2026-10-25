@@ -90,6 +90,11 @@ class Engine:
                 if next_engine is not None:
                     return self._finish(ctx, turn, "pause", self._pick(self.PAUSE_TEXT, turn))
                 return self._finish(ctx, turn, "end", self._pick(self.NO_NEXT_TEXT, turn))
+            # «да» в хабе — это «расскажи ещё раз», а не переход к новой серии.
+            # Проверка идёт до глобальных about/help/resume-веток, иначе односложное
+            # «да» съедается resume-текстом и ребёнок зацикливается в хабе.
+            if matched_intent in ("yes", "replay"):
+                return self._transition(ctx, node, matched_intent, turn)
 
         if intents.is_about(text):
             return self._stay(ctx, turn, "about", [self._pick(self.texts["about"], turn)])
@@ -97,6 +102,17 @@ class Engine:
             return self._stay(ctx, turn, "help", [self._pick(self.texts["help"], turn)])
 
         if new_session:
+            # Пройденный эпизод: в новом визите ребёнок возвращается к хабу завершения,
+            # и resume-текст должен описывать реальные последствия выбора (ветку), а не
+            # нейтральное «долина стала добрее».
+            if ctx.completed and node.get("expects"):
+                recap = self._recap(ctx, turn)
+                consequence = self._text(node.get("resume"), node, ctx.decisions, turn)
+                parts = [self._pick(self.texts["resume_prefix"], turn)]
+                if recap:
+                    parts.append(recap)
+                parts.append(consequence)
+                return self._stay(replace(ctx, unclear_count=0), turn, "resume", parts)
             parts = [
                 self._pick(self.texts["resume_prefix"], turn),
                 self._text(node.get("resume"), node, ctx.decisions, turn),
@@ -239,6 +255,10 @@ class Engine:
             path.append(name)
             node = self.nodes[name]
             parts.append(self._text(node.get("say"), node, ctx.decisions, turn))
+            # Динамический `say` (разветвление по `by_decision`) сам описывает последствия
+            # выбора — статический пересказ поверх него дал бы двойное «в прошлый раз».
+            if not isinstance(node.get("say"), dict):
+                parts.insert(0, self._recap(ctx, turn)) if self._recap(ctx, turn) else None
             effects = node.get("effects", {})
             unlocks += effects.get("unlock", [])
             meets += effects.get("meet", [])
@@ -264,7 +284,9 @@ class Engine:
 
         return TurnResult(
             text=self._join(parts),
-            buttons=[] if (end_session or completed) else buttons,
+            # Кнопки остаются живыми, пока сессия продолжается: хаб EPISODE_COMPLETE —
+            # обычный ожидающий узел, и «Ещё»/«Нет» должны быть доступны сразу.
+            buttons=[] if end_session else buttons,
             end_session=end_session,
             kind=kind,
             node=persisted,
