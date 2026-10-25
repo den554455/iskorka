@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from app.content import DEFAULT_EPISODE, episode_ids, episode_order, load_episode, next_episode_id
 from app.game import intents
 from app.game.state import GameContext, TurnResult
 
@@ -21,6 +22,20 @@ AMBIGUOUS = "__ambiguous__"
 
 
 class Engine:
+    # Тексты для перехода между эпизодами (пункт 3 и открытый вопрос 4 спецификации).
+    PAUSE_TEXT = [
+        "Мы сегодня уже побывали в двух сериях — целое приключение! Давай отдохнём: "
+        "долина никуда не денется, а Искорка будет ждать тебя в следующий раз. До встречи!",
+        "Здорово получилось! Но сказке нужен перерыв, чтобы чудеса успели улечься. "
+        "Приходи завтра — и мы продолжим прямо с нового эпизода. До встречи!",
+        "Хватит на сегодня, а? Искорка укроет семечко и светлячка, а ты расскажешь взрослому, "
+        "что было в долине. В следующий раз узнаем, что скрипит за холмом. До встречи!",
+    ]
+    NO_NEXT_TEXT = [
+        "Новая серия ещё сочиняется для тебя. А пока Искорка будет ждать у Великого дерева. До встречи!",
+        "Продолжение скоро появится! Отдыхай, а когда захочешь — возвращайся, и мы продолжим.",
+    ]
+
     def __init__(self, episode: dict, episode_id: str = "ep1") -> None:
         self.episode = episode
         self.episode_id = episode_id
@@ -39,6 +54,8 @@ class Engine:
         utterance: str | None,
         new_session: bool = False,
         dangerous: bool = False,
+        next_engine: "Engine | None" = None,
+        episodes_left: int | None = None,
     ) -> TurnResult:
         if ctx.episode_id != self.episode_id:
             raise RuntimeError(
@@ -55,20 +72,21 @@ class Engine:
         if intents.is_exit(text):
             return self._finish(ctx, turn, "exit", self._pick(self.texts["exit"], turn))
 
-        # Эпизод пройден, а ребёнок просит «ещё» — MultiEngine продолжит следующим эпизодом.
+        # Эпизод пройден, а ребёнок просит «ещё» — переход к следующему эпизоду (пункт 3).
         if ctx.completed and not new_session and "next" in self._expectations(ctx, node):
-            answer = intents.classify(text, ["yes", "no"])
-            wants_more = (
-                "yes" in answer
-                or bool(intents.classify(text, ["next"]))
-                or ("no" not in answer and intents.classify(text, list(node.get("expects", {}))))
-            )
+            wants_more = bool(intents.classify(text, ["next"]))
             if wants_more:
-                return self._transition(ctx, node, "next", turn)
+                if next_engine is not None and (episodes_left is None or episodes_left > 0):
+                    return self._start_next(next_engine, ctx, turn)
+                # Продолжения нет или лимит визита исчерпан — мягко прощаемся (открытый вопрос 4).
+                if next_engine is not None:
+                    return self._finish(ctx, turn, "pause", self._pick(self.PAUSE_TEXT, turn))
+                return self._finish(ctx, turn, "end", self._pick(self.NO_NEXT_TEXT, turn))
 
         # Самый первый ход: ребёнок ещё ничего не слышал, приветствие важнее любой реплики.
         if ctx.node == self.start:
-            return self._play(ctx, turn, self.start, kind="story")
+            started = self._play(ctx, turn, self.start, kind="story")
+            return self._with_recap(started, ctx, turn)
 
         if intents.is_about(text):
             return self._stay(ctx, turn, "about", [self._pick(self.texts["about"], turn)])
@@ -145,6 +163,10 @@ class Engine:
             # «да» + «расскажи» ведут в один узел — это не конфликт
             if len({expects[i] for i in found}) == 1:
                 return found[0]
+            # «хочу ещё» распознаётся и как «да», и как «next»: если ребёнок просит
+            # продолжение, а эпизод уже пройден — важнее переход к новой серии (пункт 3).
+            if set(found) == {"yes", "next"} and ctx.completed:
+                return "next"
             return AMBIGUOUS
         if found:
             return found[0]
@@ -158,10 +180,6 @@ class Engine:
     # ------------------------------------------------------------------ переходы
 
     def _transition(self, ctx: GameContext, node: dict, intent: str, turn: int) -> TurnResult:
-        # Переход в следующий эпизод обрабатывает MultiEngine; одиночный движок до него не доходит.
-        if self.nodes[node["expects"][intent]].get("next_episode"):
-            target = self._play(replace(ctx, unclear_count=0), turn, node["expects"][intent], kind="story")
-            return replace(target, path=target.path + ["NEXT_EPISODE"])
         decision = None
         decisions = dict(ctx.decisions)
         decision_cfg = node.get("decision")
@@ -240,6 +258,23 @@ class Engine:
             completed=completed,
             path=path,
         )
+
+    def _start_next(self, target: "Engine", ctx: GameContext, turn: int) -> TurnResult:
+        """Начинает следующий эпизод: переносим решения и награды (пункт 3 и пункт 6 спецификации).
+
+        Динамический пересказ «в прошлый раз» добавляем только если в тексте нового эпизода
+        его ещё нет — иначе приветствие серии уже содержит свой вариант recap.
+        """
+        prefix = target.new_context()
+        prefix.turn = turn
+        prefix.episodes_started = ctx.episodes_started + 1
+        prefix.decisions = dict(ctx.decisions)
+        prefix.items = set(ctx.items)
+        prefix.met = set(ctx.met)
+        started = target.step(prefix, "", new_session=False)
+        if not started.text.startswith("В прошлый раз"):
+            started = target._with_recap(started, prefix, turn)
+        return replace(started, kind="next_episode", next_episode_id=target.episode_id)
 
     # ------------------------------------------------------------------ вспомогательные ответы
 
@@ -341,26 +376,12 @@ class MultiEngine:
     """Набор движков по одному на эпизод + переход `next` между ними (пункт 3 спецификации).
 
     Интерфейс совпадает с Engine (`new_context`, `step`), поэтому GameService не знает,
-    сколько эпизодов под капотом. Переход в следующий эпизод — это новый снимок состояния:
-    `episode_id` меняется на следующий, а `node` — на его стартовый узел. Все решения
-    игрока остаются в БД и доступны новому эпизоду как обратные ссылки.
+    сколько эпизодов под капотом. Сам переход реализован в Engine.step: сюда приходит
+    только «следующий движок» и остаток лимита эпизодов за визит (открытый вопрос 4).
     """
 
     # Мягкий ограничитель (открытый вопрос 4): не больше эпизодов за один визит.
     EPISODES_PER_SESSION = 2
-
-    PAUSE_TEXT = [
-        "Мы сегодня уже побывали в двух сериях — целое приключение! Давай отдохнём: "
-        "долина никуда не денется, а Искорка будет ждать тебя в следующий раз. До встречи!",
-        "Здорово получилось! Но сказке нужен перерыв, чтобы чудеса успели улечься. "
-        "Приходи завтра — и мы продолжим прямо с нового эпизода. До встречи!",
-        "Хватит на сегодня, а? Искорка укроет семечко и светлячка, а ты расскажешь взрослому, "
-        "что было в долине. В следующий раз узнаем, что скрипит за холмом. До встречи!",
-    ]
-    NO_NEXT_TEXT = [
-        "Новая серия ещё сочиняется для тебя. А пока Искорка будет ждать у Великого дерева. До встречи!",
-        "Продолжение скоро появится! Отдыхай, а когда захочешь — возвращайся, и мы продолжим.",
-    ]
 
     def __init__(self, engines: dict[str, Engine], first_episode_id: str, order: list[str] | None = None) -> None:
         self.engines = engines
@@ -377,14 +398,11 @@ class MultiEngine:
             engine = self.engines[self.first_episode_id]
         return engine
 
-    def next_episode_id(self, episode_id: str) -> str | None:
-        if episode_id not in self.order:
+    def next_engine(self, episode_id: str) -> Engine | None:
+        nxt = next_episode_id(episode_id)
+        if nxt is None:
             return None
-        index = self.order.index(episode_id)
-        if index + 1 >= len(self.order):
-            return None
-        candidate = self.order[index + 1]
-        return candidate if candidate in self.engines else None
+        return self.engines.get(nxt)
 
     def step(
         self,
@@ -394,37 +412,15 @@ class MultiEngine:
         dangerous: bool = False,
     ) -> TurnResult:
         engine = self.engine_for(ctx.episode_id)
-        result = engine.step(
-            replace(ctx, episode_id=engine.episode_id), utterance, new_session, dangerous
+        episodes_left = max(self.EPISODES_PER_SESSION - ctx.episodes_started, 0)
+        return engine.step(
+            replace(ctx, episode_id=engine.episode_id),
+            utterance,
+            new_session=new_session,
+            dangerous=dangerous,
+            next_engine=self.next_engine(engine.episode_id),
+            episodes_left=episodes_left,
         )
-        # Одиночный движок сам не переходит между эпизодами — это делает только MultiEngine.
-        if all(not engine.nodes[name].get("next_episode") for name in result.path):
-            return result
-
-        turn = result.turn
-        nxt = self.next_episode_id(engine.episode_id)
-        if nxt is None:
-            text = Engine._pick(self.NO_NEXT_TEXT, turn)
-            return replace(
-                result, text=text, buttons=[], end_session=True,
-                kind="end", node=result.node, next_episode_id=None,
-            )
-        if ctx.episodes_started >= self.EPISODES_PER_SESSION:
-            text = Engine._pick(self.PAUSE_TEXT, turn)
-            return replace(
-                result, text=text, buttons=[], end_session=True,
-                kind="pause", node=result.node, next_episode_id=None,
-            )
-        target = self.engines[nxt]
-        prefix = target.new_context()
-        prefix.turn = turn
-        prefix.episodes_started = ctx.episodes_started + 1
-        prefix.decisions = dict(ctx.decisions)
-        prefix.items = set(ctx.items)
-        started = target.step(prefix, "", new_session=False)
-        # «В прошлый раз» собирается из сохранённых решений и наград (пункт 6).
-        started = target._with_recap(started, prefix, turn)
-        return replace(started, next_episode_id=nxt)
 
 
 def build_multi_engine() -> MultiEngine:
