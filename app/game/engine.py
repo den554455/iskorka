@@ -127,19 +127,27 @@ class Engine:
         prev = self.episode.get("prev")
         if not prev or (not ctx.decisions and not ctx.items):
             return ""
+        # Решения и награды предыдущего эпизода — строим пересказ только по ним,
+        # чтобы не дублировать то, что уже скажет стартовый узел нового эпизода.
+        prev_keys = set(prev.get("decision_keys", [])) | set(prev.get("unlock_items", []))
         lines: list[str] = []
-        if "seed_place" in ctx.decisions:
+        seed_place = ctx.decisions.get("seed_place")
+        if seed_place is not None:
             lines.append(
-                "вы посадили семечко в саду"
-                if ctx.decisions["seed_place"] == "garden"
-                else "вы посадили семечко у ручья"
+                "вы посадили семечко в саду" if seed_place == "garden" else "вы посадили семечко у ручья"
             )
-        for item in sorted(ctx.items):
-            if item == "firefly":
-                lines.append("светлячок поселился в Великом дереве")
+        if "firefly" in ctx.items:
+            lines.append("светлячок поселился в Великом дереве")
         if not lines:
             return ""
-        return "В прошлый раз " + ", а ещё ".join(lines) + "."
+        recap = "В прошлый раз " + ", а ещё ".join(lines) + "."
+        # Если о предыдущем эпизоде уже рассказывает стартовый текст (в нём есть «в прошлый
+        # раз» / «с тех пор»), динамический пересказ не добавляем — иначе он звучит дважды.
+        start_text = str(self.nodes.get(self.start, {}).get("say", ""))
+        low_start = start_text.lower()
+        if any(w in low_start for w in ("в прошлый раз", "с тех пор")):
+            return ""
+        return recap
 
     def _with_recap(self, result: TurnResult, ctx: GameContext, turn: int) -> TurnResult:
         """Ставит пересказ «в прошлый раз» перед первым репликой нового эпизода."""
@@ -274,7 +282,10 @@ class Engine:
         prefix.decisions = dict(ctx.decisions)
         prefix.items = set(ctx.items)
         prefix.met = set(ctx.met)
-        started = target.step(prefix, None, new_session=False)
+        # Переход внутри одного визита: целевой эпизод встречает ребёнка приветствием серии.
+        # Реплика не передаётся — иначе она совпала бы с ожиданием стартового узла и «съела»
+        # приветствие (ребёнок получил бы вопрос без вступления).
+        started = target.step(prefix, None, new_session=True)
         return replace(started, kind="next_episode", next_episode_id=target.episode_id)
 
     # ------------------------------------------------------------------ вспомогательные ответы
