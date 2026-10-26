@@ -82,10 +82,10 @@ def test_choice_phrases_change_world_and_complete_episode(engine, phrase, place,
     r = engine.step(ctx("CHOOSE_PLACE"), phrase)
     assert r.decision == ("seed_place", place)
     assert r.unlocks == [item]
-    assert r.completed and r.end_session
+    assert r.completed and not r.end_session  # хаб EPISODE_COMPLETE ждёт ответа («ещё»/«нет»)
     assert r.node == "EPISODE_COMPLETE"
-    assert r.path[-1] == "FINALE"
-    assert r.buttons == []
+    assert r.path[-1] == "EPISODE_COMPLETE"
+    assert r.buttons == ["Ещё", "Нет"]
 
 
 def test_garden_and_stream_have_different_consequences(engine):

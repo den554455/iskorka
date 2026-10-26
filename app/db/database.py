@@ -53,6 +53,10 @@ class Database:
                 conn.exec_driver_sql(
                     "ALTER TABLE profiles ADD COLUMN episodes_started INTEGER NOT NULL DEFAULT 0"
                 )
+            if "session_new" not in columns:
+                conn.exec_driver_sql(
+                    "ALTER TABLE profiles ADD COLUMN session_new INTEGER NOT NULL DEFAULT 0"
+                )
 
             indexes = {
                 row[1] for row in conn.exec_driver_sql("PRAGMA index_list(decisions)")

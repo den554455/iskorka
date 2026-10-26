@@ -72,9 +72,17 @@ class Engine:
         if intents.is_exit(text):
             return self._finish(ctx, turn, "exit", self._pick(self.texts["exit"], turn))
 
+        matched_intent = self._match(ctx, node, text)
+
+        # Самый первый ход: ребёнок ещё ничего не слышал, приветствие важнее любой реплики.
+        # Проверка идёт до перехода «ещё»: на старте узла `expects` может совпасть случайно.
+        if ctx.node == self.start:
+            started = self._play(ctx, turn, self.start, kind="story")
+            return self._with_recap(started, ctx, turn)
+
         # Эпизод пройден, а ребёнок просит «ещё» — переход к следующему эпизоду (пункт 3).
         if ctx.completed and not new_session and "next" in self._expectations(ctx, node):
-            wants_more = bool(intents.classify(text, ["next"]))
+            wants_more = bool(intents.classify(text, ["next"])) or matched_intent == "next"
             if wants_more:
                 if next_engine is not None and (episodes_left is None or episodes_left > 0):
                     return self._start_next(next_engine, ctx, turn)
@@ -82,11 +90,11 @@ class Engine:
                 if next_engine is not None:
                     return self._finish(ctx, turn, "pause", self._pick(self.PAUSE_TEXT, turn))
                 return self._finish(ctx, turn, "end", self._pick(self.NO_NEXT_TEXT, turn))
-
-        # Самый первый ход: ребёнок ещё ничего не слышал, приветствие важнее любой реплики.
-        if ctx.node == self.start:
-            started = self._play(ctx, turn, self.start, kind="story")
-            return self._with_recap(started, ctx, turn)
+            # «да» в хабе — это «расскажи ещё раз», а не переход к новой серии.
+            # Проверка идёт до глобальных about/help/resume-веток, иначе односложное
+            # «да» съедается resume-текстом и ребёнок зацикливается в хабе.
+            if matched_intent in ("yes", "replay"):
+                return self._transition(ctx, node, matched_intent, turn)
 
         if intents.is_about(text):
             return self._stay(ctx, turn, "about", [self._pick(self.texts["about"], turn)])
@@ -94,6 +102,17 @@ class Engine:
             return self._stay(ctx, turn, "help", [self._pick(self.texts["help"], turn)])
 
         if new_session:
+            # Пройденный эпизод: в новом визите ребёнок возвращается к хабу завершения,
+            # и resume-текст должен описывать реальные последствия выбора (ветку), а не
+            # нейтральное «долина стала добрее».
+            if ctx.completed and node.get("expects"):
+                recap = self._recap(ctx, turn)
+                consequence = self._text(node.get("resume"), node, ctx.decisions, turn)
+                parts = [self._pick(self.texts["resume_prefix"], turn)]
+                if recap:
+                    parts.append(recap)
+                parts.append(consequence)
+                return self._stay(replace(ctx, unclear_count=0), turn, "resume", parts)
             parts = [
                 self._pick(self.texts["resume_prefix"], turn),
                 self._text(node.get("resume"), node, ctx.decisions, turn),
@@ -104,9 +123,8 @@ class Engine:
             options = node.get("hint") or node.get("reask")
             return self._stay(ctx, turn, "hint", [self._pick(options, turn)], include_ask=False)
 
-        matched = self._match(ctx, node, text)
-        if matched not in (None, AMBIGUOUS):
-            return self._transition(ctx, node, matched, turn)
+        if matched_intent not in (None, AMBIGUOUS):
+            return self._transition(ctx, node, matched_intent, turn)
 
         if intents.is_repeat(text):
             parts = [self._recap(ctx, turn), self._text(node.get("resume"), node, ctx.decisions, turn)]
@@ -119,25 +137,31 @@ class Engine:
     def _recap(self, ctx: GameContext, turn: int) -> str:
         """Одно предложение «в прошлый раз», собранное из сохранённых решений и наград.
 
-        Речь ребёнка не хранится — пересказ строится только по ключам решений (`decisions`)
-        и элементам мира (`items`). Для первого эпизода (решений ещё нет) возвращаем пусто.
+        Речь ребёнка не хранится — пересказ строится только по решениям (`decisions`)
+        и наградам (`items`), которые относятся к предыдущему эпизоду (ключи и предметы
+        помечены в world.json полем `episode`). Для первого эпизода возвращаем пусто.
+
+        Дедупликация: пересказ нужен только при переходе между эпизодами внутри одного
+        визита (`episodes_started > 1`). При возвращении ребёнка в уже начатую серию
+        («с возвращением!» + resume-текст узла) история прошлого уже рассказана —
+        второй пересказ прозвучал бы дважды.
         """
-        prev = self.episode.get("prev")
-        if not prev or (not ctx.decisions and not ctx.items):
+        prev_id = self.episode.get("prev")
+        if not prev_id or ctx.episodes_started <= 1:
             return ""
-        lines: list[str] = []
-        if "seed_place" in ctx.decisions:
-            lines.append(
-                "вы посадили семечко в саду"
-                if ctx.decisions["seed_place"] == "garden"
-                else "вы посадили семечко у ручья"
-            )
-        for item in sorted(ctx.items):
-            if item == "firefly":
-                lines.append("светлячок поселился в Великом дереве")
-        if not lines:
+        if not ctx.decisions and not ctx.items:
             return ""
-        return "В прошлый раз " + ", а ещё ".join(lines) + "."
+        # Фрагменты пересказа по решениям предыдущего эпизода.
+        fragments: list[str] = []
+        if ctx.decisions.get("seed_place") == "garden":
+            fragments.append("вы посадили семечко в саду")
+        elif ctx.decisions.get("seed_place") == "stream":
+            fragments.append("вы посадили семечко у ручья")
+        if "firefly" in ctx.items:
+            fragments.append("светлячок поселился в Великом дереве")
+        if not fragments:
+            return ""
+        return "В прошлый раз " + ", а ещё ".join(fragments) + "."
 
     def _with_recap(self, result: TurnResult, ctx: GameContext, turn: int) -> TurnResult:
         """Ставит пересказ «в прошлый раз» перед первым репликой нового эпизода."""
@@ -231,11 +255,25 @@ class Engine:
             path.append(name)
             node = self.nodes[name]
             parts.append(self._text(node.get("say"), node, ctx.decisions, turn))
+            # Динамический `say` (разветвление по `by_decision`) сам описывает последствия
+            # выбора — статический пересказ поверх него дал бы двойное «в прошлый раз».
+            if not isinstance(node.get("say"), dict):
+                parts.insert(0, self._recap(ctx, turn)) if self._recap(ctx, turn) else None
             effects = node.get("effects", {})
             unlocks += effects.get("unlock", [])
             meets += effects.get("meet", [])
+            # Сессию закрываем только на явном end_session. Узел с complete=true и expects
+            # — это хаб завершения: он прощается в следующей реплике («ещё» / «нет»),
+            # поэтому гасит end_session у предшественника (FINALE). Флаг complete при этом
+            # остаётся: эпизод фактически пройден (решение принято, награды выданы), и БД
+            # должен зафиксировать это уже сейчас — иначе падение процесса между финалом и
+            # ответом в хабе потеряло бы прогресс. Сам хаб остаётся resumable-точкой, а
+            # переход к новой серии возможен и в новом визите (ctx.completed из БД).
+            if node.get("expects"):
+                end_session = False
+            else:
+                end_session = end_session or bool(node.get("end_session"))
             completed = completed or bool(node.get("complete"))
-            end_session = end_session or bool(node.get("end_session"))
             if node.get("expects"):
                 persisted = name
                 buttons = list(node.get("buttons", []))
@@ -246,6 +284,8 @@ class Engine:
 
         return TurnResult(
             text=self._join(parts),
+            # Кнопки остаются живыми, пока сессия продолжается: хаб EPISODE_COMPLETE —
+            # обычный ожидающий узел, и «Ещё»/«Нет» должны быть доступны сразу.
             buttons=[] if end_session else buttons,
             end_session=end_session,
             kind=kind,
@@ -262,8 +302,9 @@ class Engine:
     def _start_next(self, target: "Engine", ctx: GameContext, turn: int) -> TurnResult:
         """Начинает следующий эпизод: переносим решения и награды (пункт 3 и пункт 6 спецификации).
 
-        Динамический пересказ «в прошлый раз» добавляем только если в тексте нового эпизода
-        его ещё нет — иначе приветствие серии уже содержит свой вариант recap.
+        Стартовый узел целевого эпизода проигрывается как самый первый ход — с приветствием
+        серии и динамическим пересказом «в прошлый раз» (он же гасит двойной recap: повторный
+        пересказ в хабе завершения больше не печатается).
         """
         prefix = target.new_context()
         prefix.turn = turn
@@ -271,9 +312,10 @@ class Engine:
         prefix.decisions = dict(ctx.decisions)
         prefix.items = set(ctx.items)
         prefix.met = set(ctx.met)
-        started = target.step(prefix, "", new_session=False)
-        if not started.text.startswith("В прошлый раз"):
-            started = target._with_recap(started, prefix, turn)
+        # Переход внутри одного визита: целевой эпизод встречает ребёнка приветствием серии.
+        # Реплика не передаётся — иначе она совпала бы с ожиданием стартового узла и «съела»
+        # приветствие (ребёнок получил бы вопрос без вступления).
+        started = target.step(prefix, None, new_session=True)
         return replace(started, kind="next_episode", next_episode_id=target.episode_id)
 
     # ------------------------------------------------------------------ вспомогательные ответы
@@ -362,8 +404,15 @@ class Engine:
 
     def _text(self, options, node: dict, decisions: dict[str, str], turn: int) -> str:
         if isinstance(options, dict):
+            # Ключи «_default»/«_none» — служебные: они не значения решений.
+            variants = {k: v for k, v in options.items() if not k.startswith("_")}
             value = decisions.get(node.get("by_decision", ""))
-            chosen = options.get(value) or options.get("_default") or next(iter(options.values()))
+            if value is None:
+                chosen = options.get("_none") or options.get("_default")
+            else:
+                chosen = variants.get(value) or options.get("_default")
+            if not chosen:  # решение вышло за пределы развилки — берём любой объявленный вариант
+                chosen = next(iter(variants.values()), None) or next(iter(options.values()))
             return self._pick(chosen, turn)
         return self._pick(options, turn)
 

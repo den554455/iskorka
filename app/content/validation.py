@@ -194,8 +194,15 @@ def validate_episode(episode_id: str, ep: dict) -> list[str]:
             err(f"узел {name} недостижим из {start}")
 
     # --- завершение серии --------------------------------------------------------
-    if not any(nodes[n].get("complete") for n in reachable):
-        err("в сценарии нет достижимого узла с complete=true")
+    # complete на узле с expects (хаб завершения EPISODE_COMPLETE) финалом не считается:
+    # движок входит в хаб автоскатом и ждёт ответа, а сессия закрывается по следующему
+    # слову ребёнка («нет» -> RECAP/BYE с end_session). Настоящий достижимый финал —
+    # complete без вопроса либо end_session-узел.
+    if not any(
+        nodes[n].get("end_session") or (nodes[n].get("complete") and not nodes[n].get("expects"))
+        for n in reachable
+    ):
+        err("в сценарии нет достижимого финала: ни end_session, ни complete без expects")
 
     # --- циклы по auto_next (бесконечное автопроигрывание) -----------------------
     for name in nodes:

@@ -37,6 +37,8 @@ class Profile(Base):
     turn: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # Сколько эпизодов начато в профиле — мягкий ограничитель «одна серия за визит».
     episodes_started: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Последний ход начал новую сессию (переход между эпизодами внутри одного визита).
+    session_new: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # Для защиты от повторной обработки одного и того же запроса.
     last_session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

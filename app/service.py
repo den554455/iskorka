@@ -71,7 +71,10 @@ class GameService:
                 return stored
 
             ctx = repo.load_context(profile)
-            result = self.engine.step(ctx, utterance, new_session=new_session, dangerous=dangerous)
+            # Переход между эпизодами сам начинает новую сессию внутри одного визита:
+            # следующий ход проигрывает приветствие серии, даже если платформа не прислала `new`.
+            effective_new = new_session or profile.session_new == 1
+            result = self.engine.step(ctx, utterance, new_session=effective_new, dangerous=dangerous)
             text = fit_text(result.text)
             payload = json.dumps(
                 {"text": text, "buttons": result.buttons, "end_session": result.end_session},
