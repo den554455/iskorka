@@ -404,8 +404,15 @@ class Engine:
 
     def _text(self, options, node: dict, decisions: dict[str, str], turn: int) -> str:
         if isinstance(options, dict):
+            # Ключи «_default»/«_none» — служебные: они не значения решений.
+            variants = {k: v for k, v in options.items() if not k.startswith("_")}
             value = decisions.get(node.get("by_decision", ""))
-            chosen = options.get(value) or options.get("_default") or next(iter(options.values()))
+            if value is None:
+                chosen = options.get("_none") or options.get("_default")
+            else:
+                chosen = variants.get(value) or options.get("_default")
+            if not chosen:  # решение вышло за пределы развилки — берём любой объявленный вариант
+                chosen = next(iter(variants.values()), None) or next(iter(options.values()))
             return self._pick(chosen, turn)
         return self._pick(options, turn)
 
