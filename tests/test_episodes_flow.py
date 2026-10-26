@@ -20,8 +20,9 @@ from tests.conftest import PEPPER, Player
 # Последняя реплика каждого списка — «нет» в EPISODE_COMPLETE (мягкое завершение визита).
 FULL_PLAYTHROUGHS = {
     "ep1": ["", "да", "да", "дерево", "давай в садик", "нет"],
-    "ep2": ["", "да", "в листике", "искра", "нет"],
 }
+# Эпизод 2 открывается только после эпизода 1: ребёнок говорит «ещё» в хабе ep1.
+FULL_PLAYTHROUGHS["ep2"] = FULL_PLAYTHROUGHS["ep1"][:-1] + ["ещё", "да", "в листике", "искра", "нет"]
 
 
 @pytest.fixture
@@ -80,7 +81,7 @@ def test_transition_ep1_to_ep2_via_more(multi_service, db):
     assert not out.end_session  # хаб ждёт ответа: «ещё», «нет» или повтор
     more = p.say("ещё")
     assert not more.end_session
-    assert "Искра" in more.text or "светлячк" in more.text.lower() or "серия" in more.text.lower()
+    assert "в прошлый раз" in more.text.lower()
     key = make_player_key("traveler", PEPPER)
     with db.session_scope() as s:
         repo = Repository(s)
@@ -145,9 +146,9 @@ def test_visit_limit_caps_episodes_per_session(multi_service):
     for phrase in FULL_PLAYTHROUGHS["ep1"][:-1]:
         p.say(phrase)
     p.say("ещё")  # ep2 стартовал (эпизодов начато: 2 из 2)
-    for phrase in FULL_PLAYTHROUGHS["ep2"][1:-1]:
+    for phrase in ["да", "в листике", "искра"]:
         out = p.say(phrase)
     assert not out.end_session  # снова хаб EPISODE_COMPLETE
     over = p.say("ещё")  # лимит исчерпан: новый эпизод не начинается
     assert over.end_session
-    assert "завтра" in over.text.lower() or "потом" in over.text.lower()
+    assert "на сегодня" in over.text.lower()

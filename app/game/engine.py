@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 
 from app.content import DEFAULT_EPISODE, episode_ids, episode_order, load_episode, next_episode_id
@@ -98,7 +99,7 @@ class Engine:
 
         if intents.is_about(text):
             return self._stay(ctx, turn, "about", [self._pick(self.texts["about"], turn)])
-        if intents.is_help(text) and not intents.is_hint(text):
+        if intents.is_help(text) and not intents.is_hint(text) and matched_intent in (None, AMBIGUOUS):
             return self._stay(ctx, turn, "help", [self._pick(self.texts["help"], turn)])
 
         if new_session:
@@ -149,6 +150,11 @@ class Engine:
         prev_id = self.episode.get("prev")
         if not prev_id or ctx.episodes_started <= 1:
             return ""
+        # Если вступление эпизода само пересказывает прошлый раз (по выбору ребёнка),
+        # общий пересказ не добавляем: иначе «в прошлый раз» прозвучит дважды и по-другому.
+        start_say = json.dumps(self.nodes.get("INTRO", {}).get("say", ""), ensure_ascii=False)
+        if "в прошлый раз" in start_say.lower():
+            return ""
         if not ctx.decisions and not ctx.items:
             return ""
         # Фрагменты пересказа по решениям предыдущего эпизода.
@@ -168,6 +174,8 @@ class Engine:
         recap = self._recap(ctx, turn)
         if not recap or not result.text:
             return result
+        if "в прошлый раз" in result.text.lower():
+            return result  # вступление эпизода уже содержит свой пересказ по выбору ребёнка
         return replace(result, text=Engine._join([recap, result.text]))
 
     def _is_resumable(self, name: str) -> bool:
@@ -255,10 +263,7 @@ class Engine:
             path.append(name)
             node = self.nodes[name]
             parts.append(self._text(node.get("say"), node, ctx.decisions, turn))
-            # Динамический `say` (разветвление по `by_decision`) сам описывает последствия
-            # выбора — статический пересказ поверх него дал бы двойное «в прошлый раз».
-            if not isinstance(node.get("say"), dict):
-                parts.insert(0, self._recap(ctx, turn)) if self._recap(ctx, turn) else None
+            # Пересказ «в прошлый раз» ставится один раз в начале эпизода (_with_recap).
             effects = node.get("effects", {})
             unlocks += effects.get("unlock", [])
             meets += effects.get("meet", [])

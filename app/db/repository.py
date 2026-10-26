@@ -130,7 +130,7 @@ class Repository:
             profile.episodes_started += 1
         # Переход внутри одного визита: следующий ход движок должен встретить как начало
         # новой сессии, иначе приветствие серии будет проглочено веткой resume.
-        profile.session_new = 1 if result.next_episode_id else 0
+        profile.session_new = 0
         profile.last_session_id = session_id
         profile.last_message_id = message_id
         profile.last_response = response_json

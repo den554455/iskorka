@@ -26,14 +26,6 @@
       ],
       "default": "spark"
     },
-    "hill_gift": {
-      "episode": "ep4",
-      "values": [
-        "lantern",
-        "bell"
-      ],
-      "default": "lantern"
-    },
     "branch_color": {
       "episode": "ep6",
       "values": [
@@ -42,14 +34,6 @@
         "green"
       ],
       "default": "gold"
-    },
-    "lullaby_mood": {
-      "episode": "ep8",
-      "values": [
-        "cheerful",
-        "calm"
-      ],
-      "default": "calm"
     },
     "echo_home": {
       "episode": "ep10",
@@ -60,14 +44,6 @@
       ],
       "default": "cave"
     },
-    "valley_song": {
-      "episode": "ep12",
-      "values": [
-        "funny",
-        "tender"
-      ],
-      "default": "funny"
-    },
     "bridge_target": {
       "episode": "ep14",
       "values": [
@@ -75,15 +51,6 @@
         "windmill_hill"
       ],
       "default": "berry_field"
-    },
-    "tree_decoration": {
-      "episode": "ep16",
-      "values": [
-        "ribbon",
-        "bell",
-        "lantern"
-      ],
-      "default": "ribbon"
     },
     "sunset_flight": {
       "episode": "ep18",
@@ -121,7 +88,99 @@
       ],
       "default": "turns"
     },
-    "root_story": {
+    "cart_gift": {
+      "episode": "ep4",
+      "values": [
+        "lantern",
+        "bell"
+      ],
+      "default": "lantern"
+    },
+    "kap_greeting": {
+      "episode": "ep5",
+      "values": [
+        "wave",
+        "whisper",
+        "sing"
+      ],
+      "default": "wave"
+    },
+    "lullaby_sound": {
+      "episode": "ep7",
+      "values": [
+        "cricket",
+        "wind",
+        "stream"
+      ],
+      "default": "cricket"
+    },
+    "bell_mood": {
+      "episode": "ep8",
+      "values": [
+        "cheerful",
+        "gentle"
+      ],
+      "default": "cheerful"
+    },
+    "echo_word": {
+      "episode": "ep9",
+      "values": [
+        "hello",
+        "thanks",
+        "please"
+      ],
+      "default": "hello"
+    },
+    "concert_melody": {
+      "episode": "ep12",
+      "values": [
+        "cheerful",
+        "gentle"
+      ],
+      "default": "cheerful"
+    },
+    "bridge_material": {
+      "episode": "ep13",
+      "values": [
+        "logs",
+        "planks"
+      ],
+      "default": "logs"
+    },
+    "tree_gift": {
+      "episode": "ep16",
+      "values": [
+        "ribbon",
+        "bell",
+        "lantern"
+      ],
+      "default": "ribbon"
+    },
+    "cloud_question": {
+      "episode": "ep19",
+      "values": [
+        "happened",
+        "how"
+      ],
+      "default": "happened"
+    },
+    "tisha_asker": {
+      "episode": "ep21",
+      "values": [
+        "iskra",
+        "kap"
+      ],
+      "default": "iskra"
+    },
+    "bridge_listen_first": {
+      "episode": "ep23",
+      "values": [
+        "button",
+        "kap"
+      ],
+      "default": "button"
+    },
+    "root_memory": {
       "episode": "ep26",
       "values": [
         "seed",
@@ -130,21 +189,31 @@
       ],
       "default": "seed"
     },
-    "final_branch_tale": {
-      "episode": "ep28",
+    "keeper_story": {
+      "episode": "ep27",
       "values": [
         "kindness",
-        "bravery",
+        "courage",
         "friendship"
       ],
       "default": "kindness"
     },
-    "top_star": {
+    "fifth_branch": {
+      "episode": "ep28",
+      "values": [
+        "help",
+        "overcome",
+        "peace"
+      ],
+      "default": "help"
+    },
+    "final_star": {
       "episode": "ep30",
       "values": [
-        "story_tree"
+        "big",
+        "small"
       ],
-      "default": "story_tree"
+      "default": "big"
     }
   },
   "items": {

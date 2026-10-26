@@ -28,7 +28,8 @@ def test_valid_first_request_returns_greeting_in_protocol_format(client):
 
 
 def test_full_dialogue_over_http(client):
-    steps = [("", True), ("да", False), ("да", False), ("дерево", False), ("в саду", False)]
+    # После финала серия ждёт «ещё» или «нет»: «нет» мягко закрывает визит.
+    steps = [("", True), ("да", False), ("да", False), ("дерево", False), ("в саду", False), ("нет", False)]
     last = None
     for i, (text, new) in enumerate(steps):
         last = post(client, alice_payload(text, message_id=i, new=new)).json()["response"]

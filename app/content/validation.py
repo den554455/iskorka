@@ -138,9 +138,9 @@ def validate_episode(episode_id: str, ep: dict) -> list[str]:
 
 
         if "by_decision" in node:
-            for field in ("say", "resume"):
-                if field in node and not isinstance(node[field], dict):
-                    err(f"{name}.{field}: при by_decision ожидается словарь")
+            # Хотя бы одно из полей текста должно быть словарём вариантов по значению решения.
+            if not any(isinstance(node.get(f), dict) for f in ("say", "resume", "ask", "hint", "reask")):
+                err(f"{name}: by_decision задан, но ни одно поле текста не словарь вариантов")
 
         buttons = node.get("buttons", [])
         for title in buttons:

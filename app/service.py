@@ -73,7 +73,14 @@ class GameService:
             ctx = repo.load_context(profile)
             # Переход между эпизодами сам начинает новую сессию внутри одного визита:
             # следующий ход проигрывает приветствие серии, даже если платформа не прислала `new`.
-            effective_new = new_session or profile.session_new == 1
+            # Приветствие нового эпизода уже сыграно в ходе перехода, поэтому ответ ребёнка
+            # на следующем ходу — обычный ответ, а не начало сессии (иначе его нужно говорить дважды).
+            effective_new = new_session
+            if new_session:
+                # Лимит «эпизодов за визит» считается заново с каждым новым визитом;
+                # эпизод, в котором ребёнок находится сейчас, уже считается начатым.
+                profile.episodes_started = 1
+                ctx.episodes_started = 1
             result = self.engine.step(ctx, utterance, new_session=effective_new, dangerous=dangerous)
             text = fit_text(result.text)
             payload = json.dumps(
