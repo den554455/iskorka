@@ -47,10 +47,10 @@
     "bridge_target": {
       "episode": "ep14",
       "values": [
-        "berry_field",
-        "windmill_hill"
+        "meadow",
+        "hill"
       ],
-      "default": "berry_field"
+      "default": "meadow"
     },
     "sunset_flight": {
       "episode": "ep18",
@@ -73,20 +73,20 @@
     "tisha_gift": {
       "episode": "ep22",
       "values": [
-        "story_book",
-        "night_light",
+        "book",
+        "nightlight",
         "nest"
       ],
-      "default": "story_book"
+      "default": "book"
     },
     "bridge_rule": {
       "episode": "ep24",
       "values": [
-        "turns",
+        "turn",
         "together",
         "swap"
       ],
-      "default": "turns"
+      "default": "turn"
     },
     "cart_gift": {
       "episode": "ep4",

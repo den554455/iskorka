@@ -191,3 +191,11 @@ def test_response_is_valid_json_text_within_limit(client):
     r = post(client, alice_payload("", new=True))
     parsed = json.loads(r.text)
     assert set(parsed) == {"response", "version"}
+
+
+def test_sound_tags_never_reach_alice(client):
+    """Пометки «[звук: ...]» из сценария убираются: без звуковых файлов Алиса прочла бы их вслух."""
+    texts = []
+    for i, (phrase, new) in enumerate([("", True), ("да", False), ("да", False), ("дерево", False)]):
+        texts.append(post(client, alice_payload(phrase, message_id=i, new=new)).json()["response"]["text"])
+    assert texts and not any("[звук" in t or "звук:" in t for t in texts)

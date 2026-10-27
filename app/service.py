@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import re
 import logging
 import threading
 from dataclasses import dataclass
@@ -24,6 +25,14 @@ class TurnOutcome:
     buttons: list[str]
     end_session: bool
     replayed: bool = False  # True, если это повтор уже обработанного запроса
+
+
+_SOUND_TAG = re.compile(r"\s*\[звук:[^\]]*\]")
+
+
+def strip_sound_tags(text: str) -> str:
+    """Убирает пометки «[звук: ...]»: без загруженных звуков Алиса прочитала бы их вслух."""
+    return _SOUND_TAG.sub("", text).replace("  ", " ").strip()
 
 
 def fit_text(text: str, limit: int = MAX_TEXT) -> str:
@@ -82,7 +91,7 @@ class GameService:
                 profile.episodes_started = 1
                 ctx.episodes_started = 1
             result = self.engine.step(ctx, utterance, new_session=effective_new, dangerous=dangerous)
-            text = fit_text(result.text)
+            text = fit_text(strip_sound_tags(result.text))
             payload = json.dumps(
                 {"text": text, "buttons": result.buttons, "end_session": result.end_session},
                 ensure_ascii=False,
