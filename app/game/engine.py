@@ -284,7 +284,10 @@ class Engine:
                 buttons = list(node.get("buttons", []))
             if "persist_as" in node:
                 persisted = node["persist_as"]
-            parts.append(self._pick(node.get("ask"), turn))
+            ask = self._pick(node.get("ask"), turn)
+            if ask:
+                parts.append("[пауза]")  # короткая пауза перед вопросом ребёнку (только в озвучке)
+            parts.append(ask)
             name = node.get("auto_next")
 
         return TurnResult(
@@ -367,7 +370,10 @@ class Engine:
         node = self.nodes[ctx.node]
         out = list(parts)
         if include_ask:
-            out.append(self._pick(node.get("ask"), turn))
+            ask = self._pick(node.get("ask"), turn)
+            if ask:
+                out.append("[пауза]")
+            out.append(ask)
         return TurnResult(
             text=self._join(out),
             buttons=list(node.get("buttons", [])) if buttons is None else buttons,

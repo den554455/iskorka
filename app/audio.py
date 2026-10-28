@@ -46,6 +46,9 @@ _SOUND_LIST = [
 SOUNDS: dict[str, Sound] = {s.name: s for s in _SOUND_LIST}
 
 _MARKER = re.compile(r"[ \t]*\[звук:\s*([^\]]*?)\s*\]")
+_PAUSE_MARKER = re.compile(r"[ \t]*\[пауза\]")
+_PAUSE_MS = 400  # пауза перед вопросом к ребёнку
+_SOUND_PAUSE_MS = 200  # короткая пауза после звука, чтобы речь не липла к эффекту
 _SPEAKER = re.compile(r"<speaker audio='[^']*'>\s*")
 
 
@@ -59,7 +62,42 @@ def _tidy(text: str) -> str:
 
 def strip_markers(text: str) -> str:
     """Чистый текст для поля `text`: без пометок и без тегов."""
-    return _tidy(_SPEAKER.sub("", _MARKER.sub(" ", text)))
+    return _tidy(_SPEAKER.sub("", _PAUSE_MARKER.sub(" ", _MARKER.sub(" ", text))))
+
+
+# --- ударения (`+` перед ударной гласной) и паузы для озвучки --------------------------
+# Только там, где контекст однозначен: Алиса ошибается в омографах («два колеса́», «две звезды́»).
+# Остальные слова она читает верно, лишняя разметка только мешает.
+_STRESS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"\b((?:[Дд]ва|[Тт]ри|[Чч]етыре|[Оо]ба) )колеса\b"), r"\1колес+а"),
+    (re.compile(r"\b((?:[Дд]ве|[Тт]ри|[Чч]етыре|[Оо]бе) )звезды\b"), r"\1звезд+ы"),
+    (re.compile(r"\b(разомнём )головы\b"), r"\1голов+ы"),
+    (re.compile(r"\bноги(?=-корни)"), "ног+и"),
+]
+# Пауза после пересказа «в прошлый раз» и в счёте «раз, два, три…»
+_PAUSES: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"(это ваш выбор\.)"), r"\1 sil<<300>>"),
+    (re.compile(r"\b([Рр]аз|два|три|четыре),(?= (?:два|три|четыре|пять)\b)"), r"\1, sil<<250>>"),
+]
+
+
+def _with_stress(text: str) -> str:
+    for rx, repl in _STRESS:
+        text = rx.sub(repl, text)
+    return text
+
+
+def _with_pauses(text: str) -> str:
+    for rx, repl in _PAUSES:
+        text = rx.sub(repl, text)
+    return text
+
+
+def speech_markup_stripped(tts: str) -> str:
+    """Озвучка → показываемый текст (для проверок): без тегов, пауз и знаков ударения."""
+    tts = _SPEAKER.sub("", tts)
+    tts = re.sub(r"\s*sil<<\d+>>\s*", " ", tts)
+    return _tidy(tts.replace("+", ""))
 
 
 def build_tts(raw: str, limit: int) -> str:
@@ -69,6 +107,7 @@ def build_tts(raw: str, limit: int) -> str:
     при нехватке места первыми отбрасываются фоновые эффекты, затем более поздние.
     Длина озвучки (вместе с тегами) не превышает `limit`.
     """
+    raw = _PAUSE_MARKER.sub(" \x00 ", raw)
     pieces: list[tuple[str, Sound | None]] = []
     pos = 0
     seen: set[str] = set()
@@ -88,8 +127,10 @@ def build_tts(raw: str, limit: int) -> str:
 
     while True:
         tts = _render(pieces, set(kept))
-        if len(tts) <= limit or not kept:
+        if len(tts) <= limit:
             return tts
+        if not kept:
+            return _render(pieces, set(), decorate=False)  # разметка не помещается — чистый текст
         kept.remove(_victim(pieces, kept))
 
 
@@ -98,12 +139,17 @@ def _victim(pieces, kept: list[int]) -> int:
     return (ambient or kept)[-1]
 
 
-def _render(pieces, kept: set[int]) -> str:
+def _render(pieces, kept: set[int], decorate: bool = True) -> str:
     out: list[str] = []
     for i, (text, sound) in enumerate(pieces):
         if sound is not None:
             if i in kept:
-                out.append(" " + speaker_tag(sound) + " ")
+                out.append(f" {speaker_tag(sound)} sil<<{_SOUND_PAUSE_MS}>> " if decorate else "")
         else:
             out.append(text)
-    return _tidy("".join(out))
+    body = "".join(out)
+    if decorate:
+        body = _with_pauses(_with_stress(body)).replace("\x00", f"sil<<{_PAUSE_MS}>>")
+    else:
+        body = body.replace("\x00", " ")
+    return _tidy(body)

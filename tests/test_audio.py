@@ -6,7 +6,7 @@ import re
 
 import pytest
 
-from app.audio import MAX_SOUNDS_PER_REPLY, SKILL_ID, SOUNDS, build_tts, strip_markers
+from app.audio import MAX_SOUNDS_PER_REPLY, SKILL_ID, SOUNDS, build_tts, speech_markup_stripped, strip_markers
 from app.content import episode_ids, load_episode
 from app.service import GameService
 from tests.conftest import PEPPER, alice_payload
@@ -34,7 +34,7 @@ def test_known_marker_becomes_exact_tag():
     tts = build_tts("[звук: искорка] Привет! Я Искорка.", 1024)
     assert tts == (
         "<speaker audio='dialogs-upload/15b0e916-6bfb-4385-b9c6-c35c6e0bca2a/"
-        "6f16edc8-f959-4e15-93a5-d777abc37027.opus'> Привет! Я Искорка."
+        "6f16edc8-f959-4e15-93a5-d777abc37027.opus'> sil<<200>> Привет! Я Искорка."
     )
 
 
@@ -47,7 +47,7 @@ def test_same_sound_is_not_repeated_and_count_is_capped():
     tts = build_tts("[звук: тиша] А [звук: тиша] Б [звук: загадка] В [звук: дуб] Г [звук: мостик] Д", 1024)
     tags = TAG.findall(tts)
     assert len(tags) == len(set(tags)) == MAX_SOUNDS_PER_REPLY
-    assert ANY_TAG.sub("", tts).split() == "А Б В Г Д".split()
+    assert speech_markup_stripped(tts).split() == "А Б В Г Д".split()
 
 
 def test_ambient_sound_is_dropped_first():
@@ -66,7 +66,7 @@ def test_webhook_greeting_has_tts_with_sound_and_clean_text(client):
     resp = post(client, alice_payload("", new=True)).json()["response"]
     assert "<speaker" not in resp["text"] and "[звук" not in resp["text"]
     assert "6f16edc8-f959-4e15-93a5-d777abc37027" in resp["tts"]
-    assert ANY_TAG.sub("", resp["tts"]).split() == resp["text"].split()
+    assert speech_markup_stripped(resp["tts"]).split() == resp["text"].split()
 
 
 def test_service_messages_have_plain_tts(client):
@@ -108,5 +108,37 @@ def test_full_walk_tts_is_valid(db, multi_engine, monkeypatch):
             assert skill == SKILL_ID and audio in TABLE_IDS
             used.add(audio)
         # озвучка = показываемый текст + теги: ни одна реплика не потеряна и не продублирована
-        assert ANY_TAG.sub("", out.tts).split() == out.text.split()
+        assert speech_markup_stripped(out.tts).split() == out.text.split()
     assert len(used) >= 8  # в прохождении реально звучат разные эффекты
+
+
+def test_stress_marks_only_in_tts_and_only_where_ambiguous():
+    raw = "У неё четыре колеса. Обе звезды красивые. Давайте разомнём головы! У него ноги-корни. Просто колёса."
+    tts = build_tts(raw, 1024)
+    assert "колес+а" in tts and "звезд+ы" in tts and "голов+ы" in tts and "ног+и-корни" in tts
+    assert "колёса" in tts and "+" not in tts.replace("колес+а", "").replace("звезд+ы", "").replace("голов+ы", "").replace("ног+и", "")
+    assert "+" not in strip_markers(raw)
+
+
+def test_pauses_before_question_after_recap_and_in_counting():
+    tts = build_tts("Раз, два, три! Это ваш выбор. В прошлый раз так: это ваш выбор. [пауза] Пойдём?", 1024)
+    assert "Раз, sil<<250>> два, sil<<250>> три!" in tts
+    assert "это ваш выбор. sil<<300>>" in tts
+    assert "sil<<400>> Пойдём?" in tts
+    assert "[пауза]" not in strip_markers("Привет. [пауза] Пойдём?") and strip_markers("Привет. [пауза] Пойдём?") == "Привет. Пойдём?"
+
+
+def test_markup_dropped_when_it_does_not_fit():
+    tts = build_tts("[звук: тиша] " + "Слово. " * 145 + "[пауза] Да?", 1024)
+    assert len(tts) <= 1024 and "sil<<" not in tts
+
+
+def test_every_question_in_full_walk_is_preceded_by_pause(db, multi_engine, monkeypatch):
+    import tests.test_all_episodes as walk
+
+    seen = []
+    real = GameService.handle_turn
+    monkeypatch.setattr(GameService, "handle_turn", lambda self, **kw: seen.append(real(self, **kw)) or seen[-1])
+    walk._walk(GameService(db, multi_engine, PEPPER), db, lambda c: c[0])
+    assert sum("sil<<400>>" in o.tts for o in seen) > 50
+    assert all("sil<<" not in o.text and "+" not in o.text for o in seen)
