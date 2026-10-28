@@ -10,6 +10,7 @@ import logging
 import threading
 from dataclasses import dataclass
 
+from app.audio import build_tts, strip_markers
 from app.db.database import Database
 from app.db.repository import Repository
 from app.game.engine import Engine
@@ -21,10 +22,11 @@ MAX_TEXT = 1024
 
 @dataclass(frozen=True)
 class TurnOutcome:
-    text: str
+    text: str          # показываемый текст: без пометок и без тегов звуков
     buttons: list[str]
     end_session: bool
     replayed: bool = False  # True, если это повтор уже обработанного запроса
+    tts: str = ""      # озвучка: текст + теги <speaker audio=…>; пусто → озвучивается text
 
 
 _SOUND_TAG = re.compile(r"\s*\[звук:[^\]]*\]")
@@ -32,7 +34,7 @@ _SOUND_TAG = re.compile(r"\s*\[звук:[^\]]*\]")
 
 def strip_sound_tags(text: str) -> str:
     """Убирает пометки «[звук: ...]»: без загруженных звуков Алиса прочитала бы их вслух."""
-    return _SOUND_TAG.sub("", text).replace("  ", " ").strip()
+    return strip_markers(text)
 
 
 def fit_text(text: str, limit: int = MAX_TEXT) -> str:
@@ -92,15 +94,16 @@ class GameService:
                 ctx.episodes_started = 1
             result = self.engine.step(ctx, utterance, new_session=effective_new, dangerous=dangerous)
             text = fit_text(strip_sound_tags(result.text))
+            tts = fit_text(build_tts(result.text, MAX_TEXT), MAX_TEXT)
             payload = json.dumps(
-                {"text": text, "buttons": result.buttons, "end_session": result.end_session},
+                {"text": text, "tts": tts, "buttons": result.buttons, "end_session": result.end_session},
                 ensure_ascii=False,
             )
             changes = repo.apply_turn(profile, result, session_id, message_id, payload)
             logger.info(
                 "Ход: kind=%s node=%s новые_награды=%s", result.kind, result.node, changes["new_items"]
             )
-            return TurnOutcome(text, result.buttons, result.end_session)
+            return TurnOutcome(text, result.buttons, result.end_session, tts=tts)
 
     @staticmethod
     def _stored_duplicate(profile, session_id: str, message_id: int | None) -> TurnOutcome | None:
@@ -114,7 +117,10 @@ class GameService:
         ):
             return None
         data = json.loads(profile.last_response)
-        return TurnOutcome(data["text"], data["buttons"], data["end_session"], replayed=True)
+        return TurnOutcome(
+            data["text"], data["buttons"], data["end_session"], replayed=True,
+            tts=data.get("tts", data["text"]),  # ответы, сохранённые до появления tts
+        )
 
     def reset_player(self, player_id: str) -> bool:
         """Только для разработки: удаляет профиль и связанные данные."""

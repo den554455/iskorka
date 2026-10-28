@@ -63,6 +63,6 @@ def create_router(service: GameService, max_body_bytes: int, secret: str = "") -
             logger.error("Ошибка обработки хода: %s", type(exc).__name__)
             return JSONResponse(build_response(FRIENDLY_ERROR, [], False))
 
-        return JSONResponse(build_response(outcome.text, outcome.buttons, outcome.end_session))
+        return JSONResponse(build_response(outcome.text, outcome.buttons, outcome.end_session, tts=outcome.tts))
 
     return router

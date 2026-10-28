@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.audio import strip_markers
 from app.game.intents import KNOWN_INTENTS
 
 MAX_TEXT = 1024
@@ -42,7 +43,8 @@ def _variants(value: Any) -> list[str]:
 
 
 def _max_len(value: Any) -> int:
-    return max((len(v) for v in _variants(value)), default=0)
+    # пометки [звук: …] в показываемый текст не попадают, поэтому длину считаем без них
+    return max((len(strip_markers(v)) for v in _variants(value) if isinstance(v, str)), default=0)
 
 
 def _gendered_problem(text: str) -> list[str]:
@@ -127,7 +129,7 @@ def validate_episode(episode_id: str, ep: dict) -> list[str]:
             for text in _variants(node.get(field)):
                 if not isinstance(text, str) or not text.strip():
                     err(f"{name}.{field}: пустой вариант текста")
-                elif len(text) > MAX_TEXT:
+                elif len(strip_markers(text)) > MAX_TEXT:
                     err(f"{name}.{field}: вариант длиннее {MAX_TEXT} символов")
 
         # Правило 17: не обращаемся к ребёнку в прошедшем времени на «ты».

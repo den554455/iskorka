@@ -70,8 +70,13 @@ class AliceRequest(_Lenient):
         return bool(self.request.markup and self.request.markup.dangerous_context)
 
 
-def build_response(text: str, buttons: list[str], end_session: bool) -> dict:
-    response: dict[str, Any] = {"text": text, "end_session": end_session}
+def build_response(text: str, buttons: list[str], end_session: bool, tts: str | None = None) -> dict:
+    """Собирает ответ платформы.
+
+    `text` — обязательное поле протокола (показывается на экране, ≤1024 знаков), поэтому
+    остаётся. Озвучка — `tts` (с тегами звуков); без неё Алиса читает `text`.
+    """
+    response: dict[str, Any] = {"text": text, "tts": tts if tts else text, "end_session": end_session}
     if buttons and not end_session:
         response["buttons"] = [{"title": title[:64], "hide": True} for title in buttons]
     return {"response": response, "version": "1.0"}

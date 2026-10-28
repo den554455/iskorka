@@ -1,0 +1,112 @@
+"""Звуковые эффекты: пометки [звук: …] → теги <speaker audio=…> только в tts."""
+
+from __future__ import annotations
+
+import re
+
+import pytest
+
+from app.audio import MAX_SOUNDS_PER_REPLY, SKILL_ID, SOUNDS, build_tts, strip_markers
+from app.content import episode_ids, load_episode
+from app.service import GameService
+from tests.conftest import PEPPER, alice_payload
+from tests.test_alice_webhook import post
+
+# ID из таблицы «ID Аудио» — единственный допустимый источник идентификаторов.
+TABLE_IDS = {
+    "6f16edc8-f959-4e15-93a5-d777abc37027", "6242a5ac-e677-4b3f-bb2f-ee139539f043",
+    "d78c18a4-7481-4e4b-a3a8-3a7b51e31fa2", "baba5d7c-7648-469d-8cb2-137a01e0074e",
+    "6005a60f-7f4a-4980-bf40-370bea26b4b5", "a91e3be6-f70f-4d1f-94a3-8ea211c03882",
+    "b29010c9-e99d-4abe-b6f3-339d9d3882b5", "6b1877f9-a22b-4875-b9b6-582d07e5f2a0",
+    "1321435f-f7e3-4a71-974b-2e4f4ad73503", "954e9dd8-16d2-4580-a12b-0140892f3fdc",
+    "69c9fe3c-8535-4eca-b512-130a74f3d93d", "971043da-1528-4298-afad-2bb52bd08711",
+}
+TAG = re.compile(r"<speaker audio='dialogs-upload/([0-9a-f-]{36})/([0-9a-f-]{36})\.opus'>")
+ANY_TAG = re.compile(r"<speaker[^>]*>")
+
+
+def test_sound_table_matches_source_ids():
+    assert {s.audio_id for s in SOUNDS.values()} == TABLE_IDS
+    assert SKILL_ID == "15b0e916-6bfb-4385-b9c6-c35c6e0bca2a"
+
+
+def test_known_marker_becomes_exact_tag():
+    tts = build_tts("[звук: искорка] Привет! Я Искорка.", 1024)
+    assert tts == (
+        "<speaker audio='dialogs-upload/15b0e916-6bfb-4385-b9c6-c35c6e0bca2a/"
+        "6f16edc8-f959-4e15-93a5-d777abc37027.opus'> Привет! Я Искорка."
+    )
+
+
+def test_unknown_marker_is_dropped_and_text_kept():
+    assert build_tts("Ветер. [звук: ветер] Дальше.", 1024) == "Ветер. Дальше."
+    assert strip_markers("Ветер. [звук: ветер] Дальше. [звук: тиша]") == "Ветер. Дальше."
+
+
+def test_same_sound_is_not_repeated_and_count_is_capped():
+    tts = build_tts("[звук: тиша] А [звук: тиша] Б [звук: загадка] В [звук: дуб] Г [звук: мостик] Д", 1024)
+    tags = TAG.findall(tts)
+    assert len(tags) == len(set(tags)) == MAX_SOUNDS_PER_REPLY
+    assert ANY_TAG.sub("", tts).split() == "А Б В Г Д".split()
+
+
+def test_ambient_sound_is_dropped_first():
+    tts = build_tts("[звук: ручей кап] А [звук: тиша] Б [звук: загадка] В [звук: дуб] Г", 1024)
+    ids = [t[1] for t in TAG.findall(tts)]
+    assert SOUNDS["ручей кап"].audio_id not in ids and len(ids) == 3
+
+
+def test_tags_dropped_when_tts_would_exceed_limit():
+    body = "Слово. " * 140  # ~980 знаков
+    tts = build_tts("[звук: искорка] " + body, 1024)
+    assert len(tts) <= 1024 and "<speaker" not in tts
+
+
+def test_webhook_greeting_has_tts_with_sound_and_clean_text(client):
+    resp = post(client, alice_payload("", new=True)).json()["response"]
+    assert "<speaker" not in resp["text"] and "[звук" not in resp["text"]
+    assert "6f16edc8-f959-4e15-93a5-d777abc37027" in resp["tts"]
+    assert ANY_TAG.sub("", resp["tts"]).split() == resp["text"].split()
+
+
+def test_service_messages_have_plain_tts(client):
+    resp = post(client, alice_payload("ping", new=False)).json()["response"]
+    assert resp["tts"] == resp["text"] and "<speaker" not in resp["tts"]
+
+
+@pytest.mark.parametrize("eid", sorted(episode_ids(), key=lambda e: int(e[2:])))
+def test_every_marker_in_content_is_known_or_ignorable(eid):
+    """Пометка с названием вне таблицы звуков допустима (её вырежут), но формат обязан быть верным."""
+    blob = str(load_episode(eid))
+    for name in re.findall(r"\[звук: ([^\]]+)\]", blob):
+        assert re.fullmatch(r"[а-яё ]+", name)
+
+
+def test_full_walk_tts_is_valid(db, multi_engine, monkeypatch):
+    import tests.test_all_episodes as walk
+
+    seen = []
+    real = GameService.handle_turn
+
+    def spy(self, **kw):
+        out = real(self, **kw)
+        seen.append(out)
+        return out
+
+    monkeypatch.setattr(GameService, "handle_turn", spy)
+    walk._walk(GameService(db, multi_engine, PEPPER), db, lambda c: c[0])
+    assert len(seen) > 100
+    used = set()
+    for out in seen:
+        assert "[звук" not in out.tts and "[звук" not in out.text
+        assert "<speaker" not in out.text
+        assert len(out.tts) <= 1024
+        tags = TAG.findall(out.tts)
+        assert len(tags) <= MAX_SOUNDS_PER_REPLY and len(tags) == len(set(tags))
+        assert len(ANY_TAG.findall(out.tts)) == len(tags)  # нет «кривых» тегов
+        for skill, audio in tags:
+            assert skill == SKILL_ID and audio in TABLE_IDS
+            used.add(audio)
+        # озвучка = показываемый текст + теги: ни одна реплика не потеряна и не продублирована
+        assert ANY_TAG.sub("", out.tts).split() == out.text.split()
+    assert len(used) >= 8  # в прохождении реально звучат разные эффекты
