@@ -60,6 +60,16 @@ class AliceRequest(_Lenient):
             return self.session.application.application_id
         return self.session.user_id or None
 
+    def user_id(self) -> str | None:
+        """Подтверждённый идентификатор пользователя Яндекса: session.user.user_id.
+
+        Есть только у авторизованных. Устаревшее плоское session.user_id (равно application_id),
+        session_id и application_id постоянным идентификатором пользователя не считаются.
+        """
+        user = self.session.user
+        value = (user.user_id or "").strip() if user else ""
+        return value or None
+
     def utterance(self) -> str:
         return self.request.command or self.request.original_utterance
 

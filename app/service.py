@@ -47,8 +47,14 @@ def fit_text(text: str, limit: int = MAX_TEXT) -> str:
 
 
 def make_player_key(player_id: str, pepper: str) -> str:
-    """Псевдоним игрока. Исходный идентификатор платформы нигде не хранится."""
+    """Псевдоним анонимного игрока. Исходный идентификатор платформы нигде не хранится."""
     return hmac.new(pepper.encode(), f"alice:{player_id}".encode(), hashlib.sha256).hexdigest()
+
+
+def make_user_key(user_id: str, pepper: str) -> str:
+    """Псевдоним авторизованного пользователя (session.user.user_id). Другое пространство имён,
+    чем у make_player_key, поэтому ключи не могут совпасть."""
+    return hmac.new(pepper.encode(), f"alice-user:{user_id}".encode(), hashlib.sha256).hexdigest()
 
 
 class GameService:
@@ -63,18 +69,28 @@ class GameService:
     def handle_turn(
         self,
         *,
-        player_id: str,
+        player_id: str | None,
         session_id: str,
         message_id: int | None,
         utterance: str | None,
         new_session: bool,
         dangerous: bool = False,
+        user_id: str | None = None,
     ) -> TurnOutcome:
-        key = make_player_key(player_id, self.pepper)
+        """`player_id` — идентификатор приложения (анонимный игрок), `user_id` — подтверждённый
+        session.user.user_id. Нужен хотя бы один из них."""
+        if not player_id and not user_id:
+            raise ValueError("нужен player_id или user_id")
+        anon_key = make_player_key(player_id, self.pepper) if player_id else None
+        user_key = make_user_key(user_id, self.pepper) if user_id else None
+        key = user_key or anon_key
         with self._lock, self.db.session_scope() as session:
             repo = Repository(session)
             ctx0 = self.engine.new_context()
-            profile = repo.get_or_create_profile(key, ctx0.episode_id, ctx0.node)
+            profile, outcome = repo.resolve_profile(
+                anon_key=anon_key, user_key=user_key, episode_id=ctx0.episode_id, start_node=ctx0.node
+            )
+            self._log_profile_outcome(outcome, profile)
 
             stored = self._stored_duplicate(profile, session_id, message_id)
             if stored is not None:
@@ -103,7 +119,30 @@ class GameService:
             logger.info(
                 "Ход: kind=%s node=%s новые_награды=%s", result.kind, result.node, changes["new_items"]
             )
+            if result.kind == "unclear":
+                # Речь ребёнка не пишем: только где и какая это по счёту неудача.
+                logger.info(
+                    "Нераспознанный ответ: эпизод=%s узел=%s подряд=%d",
+                    profile.episode_id, result.node, result.unclear_count,
+                )
             return TurnOutcome(text, result.buttons, result.end_session, tts=tts)
+
+    @staticmethod
+    def _log_profile_outcome(outcome: str, profile) -> None:
+        """Журнал выбора профиля: без идентификаторов платформы, только внутренний номер профиля."""
+        if outcome == "user_linked":
+            logger.info("Анонимный профиль привязан к пользователю: профиль=#%s", profile.id)
+        elif outcome == "user_existing_conflict":
+            logger.info(
+                "Конфликт профилей: используется профиль пользователя #%s, анонимный профиль "
+                "устройства не изменён и не удалён", profile.id,
+            )
+        elif outcome == "user_created_anon_taken":
+            logger.info("Создан профиль пользователя #%s: анонимный профиль устройства принадлежит другому", profile.id)
+        elif outcome in ("user_created", "anon_created"):
+            logger.info("Создан профиль #%s (%s)", profile.id, outcome)
+        else:
+            logger.debug("Профиль #%s найден (%s)", profile.id, outcome)
 
     @staticmethod
     def _stored_duplicate(profile, session_id: str, message_id: int | None) -> TurnOutcome | None:

@@ -40,6 +40,61 @@ class Repository:
         except IntegrityError:  # параллельный запрос успел создать профиль
             return self.s.scalars(select(Profile).where(Profile.player_key == player_key)).one()
 
+    def find_profile_by_user(self, user_key: str) -> Profile | None:
+        return self.s.scalar(select(Profile).where(Profile.user_key == user_key))
+
+    def resolve_profile(
+        self,
+        *,
+        anon_key: str | None,
+        user_key: str | None,
+        episode_id: str,
+        start_node: str,
+    ) -> tuple[Profile, str]:
+        """Находит (или создаёт) профиль игрока и сообщает исход — для журнала и тестов.
+
+        Анонимный игрок (нет user_key): прежнее поведение, профиль по ключу приложения.
+        Авторизованный:
+          1. профиль с таким user_key — используем его; чужой анонимный профиль на устройстве
+             не трогаем (исход `user_existing_conflict`, если он есть и ещё ни к кому не привязан);
+          2. иначе анонимный профиль этого приложения, не привязанный ни к кому, привязываем
+             (`user_linked`): меняется только user_key, весь прогресс остаётся на месте;
+          3. иначе новый профиль (`user_created`; `user_created_anon_taken`, если анонимный
+             профиль устройства уже принадлежит другому пользователю — профили не объединяются).
+        Всё выполняется в транзакции вызывающего; гонки гасит UNIQUE на user_key.
+        """
+        if not user_key:
+            existed = bool(anon_key and self.find_profile(anon_key))
+            profile = self.get_or_create_profile(anon_key, episode_id, start_node)  # type: ignore[arg-type]
+            return profile, "anon_existing" if existed else "anon_created"
+
+        anon = self.find_profile(anon_key) if anon_key else None
+        mine = self.find_profile_by_user(user_key)
+        if mine:
+            conflict = anon is not None and anon.id != mine.id and anon.user_key is None
+            return mine, "user_existing_conflict" if conflict else "user_existing"
+
+        if anon is not None and anon.user_key is None:
+            try:
+                with self.s.begin_nested():
+                    anon.user_key = user_key
+                    self.s.flush()
+                return anon, "user_linked"
+            except IntegrityError:  # параллельный первый вход успел привязать профиль к этому user_key
+                self.s.expire(anon)
+                return self.s.scalars(select(Profile).where(Profile.user_key == user_key)).one(), "user_existing"
+
+        try:
+            with self.s.begin_nested():
+                profile = Profile(
+                    player_key=user_key, user_key=user_key, episode_id=episode_id, node=start_node, turn=0
+                )
+                self.s.add(profile)
+                self.s.flush()
+            return profile, "user_created_anon_taken" if anon is not None else "user_created"
+        except IntegrityError:
+            return self.s.scalars(select(Profile).where(Profile.user_key == user_key)).one(), "user_existing"
+
     def find_profile(self, player_key: str) -> Profile | None:
         return self.s.scalar(select(Profile).where(Profile.player_key == player_key))
 

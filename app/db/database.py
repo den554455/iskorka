@@ -26,9 +26,18 @@ class Database:
 
         @event.listens_for(self.engine, "connect")
         def _pragmas(dbapi_connection, _record):  # pragma: no cover - вызывается драйвером
+            # Рецепт SQLAlchemy для pysqlite: драйвер сам управляет транзакциями и из-за этого
+            # SAVEPOINT (begin_nested) преждевременно фиксирует внешнюю транзакцию. Отключаем
+            # неявное управление и открываем BEGIN сами (см. ниже) — тогда rollback откатывает
+            # и привязку профиля, и сам ход.
+            dbapi_connection.isolation_level = None
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA foreign_keys=ON")
             cursor.close()
+
+        @event.listens_for(self.engine, "begin")
+        def _begin(conn):  # pragma: no cover - вызывается SQLAlchemy
+            conn.exec_driver_sql("BEGIN")
 
         self._sessions = sessionmaker(self.engine, expire_on_commit=False)
 
@@ -42,6 +51,7 @@ class Database:
         1. profiles.episodes_started — мягкий ограничитель числа эпизодов за визит.
         2. decisions: UNIQUE(profile_id, episode_id, key) -> UNIQUE(profile_id, key),
            чтобы решение не перезаписывалось даже при повторном прохождении эпизода.
+        3. profiles.user_key + уникальный индекс — привязка прогресса к session.user.user_id.
         """
         if self.engine.dialect.name != "sqlite":
             return
@@ -57,6 +67,13 @@ class Database:
                 conn.exec_driver_sql(
                     "ALTER TABLE profiles ADD COLUMN session_new INTEGER NOT NULL DEFAULT 0"
                 )
+            if "user_key" not in columns:
+                # 3. Привязка к session.user.user_id. SQLite не умеет ADD COLUMN ... UNIQUE,
+                # поэтому уникальность задаёт отдельный индекс (NULL-ы допускаются много раз).
+                conn.exec_driver_sql("ALTER TABLE profiles ADD COLUMN user_key VARCHAR(64)")
+            conn.exec_driver_sql(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_profiles_user_key ON profiles(user_key)"
+            )
 
             indexes = {
                 row[1] for row in conn.exec_driver_sql("PRAGMA index_list(decisions)")

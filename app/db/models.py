@@ -1,4 +1,5 @@
-"""Схема БД. Личных данных нет: игрок идентифицируется только хэшем идентификатора платформы."""
+"""Схема БД. Личных данных нет: игрок идентифицируется только хэшем идентификатора платформы
+(application_id для анонимных, session.user.user_id для авторизованных)."""
 
 from __future__ import annotations
 
@@ -31,6 +32,9 @@ class Profile(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     # HMAC-SHA256 от идентификатора приложения Алисы. UNIQUE создаёт индекс.
     player_key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    # HMAC-SHA256 от session.user.user_id (только для авторизованных в Яндексе). NULL — профиль
+    # анонимный. UNIQUE: у одного пользователя не больше одного профиля, один профиль — один пользователь.
+    user_key: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
     episode_id: Mapped[str] = mapped_column(String(32), nullable=False)
     node: Mapped[str] = mapped_column(String(48), nullable=False)
     unclear_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
