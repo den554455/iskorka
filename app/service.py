@@ -10,7 +10,7 @@ import logging
 import threading
 from dataclasses import dataclass
 
-from app.audio import build_tts, strip_markers
+from app.audio import _SIL_LEGACY, build_tts, strip_markers
 from app.db.database import Database
 from app.db.repository import Repository
 from app.game.engine import Engine
@@ -158,7 +158,8 @@ class GameService:
         data = json.loads(profile.last_response)
         return TurnOutcome(
             data["text"], data["buttons"], data["end_session"], replayed=True,
-            tts=data.get("tts", data["text"]),  # ответы, сохранённые до появления tts
+            # ответы, сохранённые до появления tts; неверную прежнюю запись пауз sil<<мс>> убираем
+            tts=_SIL_LEGACY.sub(" ", data.get("tts", data["text"])).strip(),
         )
 
     def reset_player(self, player_id: str) -> bool:

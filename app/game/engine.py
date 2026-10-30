@@ -286,7 +286,7 @@ class Engine:
                 persisted = node["persist_as"]
             ask = self._pick(node.get("ask"), turn)
             if ask:
-                parts.append("[пауза]")  # короткая пауза перед вопросом ребёнку (только в озвучке)
+                parts.append("[пауза]")  # пауза перед вопросом ребёнку (только в озвучке)
             parts.append(ask)
             name = node.get("auto_next")
 

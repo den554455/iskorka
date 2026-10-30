@@ -58,13 +58,13 @@ def test_second_pass_changes_nothing():
 
 def test_markers_tags_and_pauses_are_not_touched():
     tag = f"<speaker audio='dialogs-upload/{SKILL_ID}/971043da-1528-4298-afad-2bb52bd08711.opus'>"
-    text = f"{tag} sil<<300>> четыре колеса [звук: ветер] {tag}"
+    text = f"{tag} sil <[300]> четыре колеса [звук: ветер] {tag}"
     out = apply_stress(text)
-    assert out.count(tag) == 2 and "sil<<300>>" in out and "[звук: ветер]" in out and "колес+а" in out
+    assert out.count(tag) == 2 and "sil <[300]>" in out and "[звук: ветер]" in out and "колес+а" in out
 
 
 def test_tts_keeps_audio_tags_and_text_equals_stripped_tts():
-    raw = "[звук: дуб] У неё четыре колеса. [пауза] Обе звезды — красивые?"
+    raw = "[звук: дуб] У неё четыре колеса. Обе звезды — красивые?"
     tts = build_tts(raw, 1024)
     assert re.search(r"<speaker audio='dialogs-upload/[0-9a-f-]{36}/971043da-1528-4298-afad-2bb52bd08711\.opus'>", tts)
     assert "колес+а" in tts and "звезд+ы" in tts

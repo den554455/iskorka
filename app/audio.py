@@ -46,10 +46,17 @@ _SOUND_LIST = [
 SOUNDS: dict[str, Sound] = {s.name: s for s in _SOUND_LIST}
 
 _MARKER = re.compile(r"[ \t]*\[звук:\s*([^\]]*?)\s*\]")
-_PAUSE_MARKER = re.compile(r"[ \t]*\[пауза\]")
-_PAUSE_MS = 400  # пауза перед вопросом к ребёнку
-_SOUND_PAUSE_MS = 200  # короткая пауза после звука, чтобы речь не липла к эффекту
 _SPEAKER = re.compile(r"<speaker audio='[^']*'>\s*")
+_PAUSE_MARKER = re.compile(r"[ \t]*\[пауза\]")  # метка сценария/движка: пауза перед вопросом ребёнку
+_PAUSE_MS = 400
+_SOUND_PAUSE_MS = 200  # короткая пауза после звука, чтобы речь не липла к эффекту
+_SIL = re.compile(r"\s*sil <\[\d+\]>\s*")
+_SIL_LEGACY = re.compile(r"\s*sil\s*<<\d+>>\s*")  # неверная форма из прежней версии: Алиса её зачитывала
+
+
+def sil(ms: int) -> str:
+    """Пауза в формате Яндекса: `sil <[мс]>` (не `sil<<мс>>`: такую запись Алиса зачитывает вслух)."""
+    return f"sil <[{ms}]>"
 
 
 def speaker_tag(sound: Sound) -> str:
@@ -77,17 +84,17 @@ _STRESS: list[tuple[re.Pattern, str]] = [
 ]
 # Пауза после пересказа «в прошлый раз» и в счёте «раз, два, три…»
 _PAUSES: list[tuple[re.Pattern, str]] = [
-    (re.compile(r"(это ваш выбор\.)"), r"\1 sil<<300>>"),
-    (re.compile(r"\b([Рр]аз|два|три|четыре),(?= (?:два|три|четыре|пять)\b)"), r"\1, sil<<250>>"),
+    (re.compile(r"(это ваш выбор\.)"), r"\1 " + sil(300)),
+    (re.compile(r"\b([Рр]аз|два|три|четыре),(?= (?:два|три|четыре|пять)\b)"), r"\1, " + sil(250)),
 ]
 
 
 # Служебные фрагменты, внутри которых слова не трогаем: теги звуков, паузы, пометки сценария.
-_PROTECTED = re.compile(r"(<speaker[^>]*>|sil<<\d+>>|\[[^\]]*\]|\x00)")
+_PROTECTED = re.compile(r"(<speaker[^>]*>|sil <\[\d+\]>|\[[^\]]*\]|\x00)")
 
 
 def apply_stress(text: str) -> str:
-    """Расставляет ударения из `_STRESS` в обычном тексте, не затрагивая теги и паузы.
+    """Расставляет ударения из `_STRESS` в обычном тексте, не затрагивая теги звуков, паузы и пометки.
 
     Идемпотентна: правила ищут слово без знака `+`, поэтому повторный проход ничего не меняет.
     """
@@ -109,10 +116,8 @@ def _with_pauses(text: str) -> str:
 
 
 def speech_markup_stripped(tts: str) -> str:
-    """Озвучка → показываемый текст (для проверок): без тегов, пауз и знаков ударения."""
-    tts = _SPEAKER.sub("", tts)
-    tts = re.sub(r"\s*sil<<\d+>>\s*", " ", tts)
-    return _tidy(tts.replace("+", ""))
+    """Озвучка → показываемый текст (для проверок): без тегов звуков, пауз и знаков ударения."""
+    return _tidy(_SIL.sub(" ", _SPEAKER.sub("", tts)).replace("+", ""))
 
 
 def build_tts(raw: str, limit: int) -> str:
@@ -159,12 +164,12 @@ def _render(pieces, kept: set[int], decorate: bool = True) -> str:
     for i, (text, sound) in enumerate(pieces):
         if sound is not None:
             if i in kept:
-                out.append(f" {speaker_tag(sound)} sil<<{_SOUND_PAUSE_MS}>> " if decorate else "")
+                out.append(f" {speaker_tag(sound)} {sil(_SOUND_PAUSE_MS)} " if decorate else "")
         else:
             out.append(text)
     body = "".join(out)
     if decorate:
-        body = _with_pauses(_with_stress(body)).replace("\x00", f"sil<<{_PAUSE_MS}>>")
+        body = _with_pauses(_with_stress(body)).replace("\x00", sil(_PAUSE_MS))
     else:
         body = body.replace("\x00", " ")
     return _tidy(body)

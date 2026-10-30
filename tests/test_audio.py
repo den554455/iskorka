@@ -34,7 +34,7 @@ def test_known_marker_becomes_exact_tag():
     tts = build_tts("[звук: искорка] Привет! Я Искорка.", 1024)
     assert tts == (
         "<speaker audio='dialogs-upload/15b0e916-6bfb-4385-b9c6-c35c6e0bca2a/"
-        "6f16edc8-f959-4e15-93a5-d777abc37027.opus'> sil<<200>> Привет! Я Искорка."
+        "6f16edc8-f959-4e15-93a5-d777abc37027.opus'> sil <[200]> Привет! Я Искорка."
     )
 
 
@@ -120,25 +120,51 @@ def test_stress_marks_only_in_tts_and_only_where_ambiguous():
     assert "+" not in strip_markers(raw)
 
 
-def test_pauses_before_question_after_recap_and_in_counting():
-    tts = build_tts("Раз, два, три! Это ваш выбор. В прошлый раз так: это ваш выбор. [пауза] Пойдём?", 1024)
-    assert "Раз, sil<<250>> два, sil<<250>> три!" in tts
-    assert "это ваш выбор. sil<<300>>" in tts
-    assert "sil<<400>> Пойдём?" in tts
-    assert "[пауза]" not in strip_markers("Привет. [пауза] Пойдём?") and strip_markers("Привет. [пауза] Пойдём?") == "Привет. Пойдём?"
+def test_pauses_use_yandex_syntax_not_the_spoken_form():
+    """Формат паузы — `sil <[мс]>`; прежняя запись `sil<<мс>>` Алиса зачитывала вслух."""
+    tts = build_tts("[звук: тиша] Раз, два, три! Это ваш выбор. В прошлый раз так: это ваш выбор. [пауза] Пойдём?", 1024)
+    assert "sil<<" not in tts and "<<" not in tts and ">>" not in tts
+    assert "Раз, sil <[250]> два, sil <[250]> три!" in tts
+    assert "это ваш выбор. sil <[300]>" in tts
+    assert "sil <[400]> Пойдём?" in tts and "sil <[200]>" in tts  # после звука
+    assert strip_markers("Привет. [пауза] Пойдём?") == "Привет. Пойдём?"
 
 
-def test_markup_dropped_when_it_does_not_fit():
+def test_sound_dropped_when_it_does_not_fit():
     tts = build_tts("[звук: тиша] " + "Слово. " * 145 + "[пауза] Да?", 1024)
-    assert len(tts) <= 1024 and "sil<<" not in tts
+    assert len(tts) <= 1024 and "<speaker" not in tts and "sil" not in tts
 
 
-def test_every_question_in_full_walk_is_preceded_by_pause(db, multi_engine, monkeypatch):
+def test_pauses_in_full_walk_are_valid_and_never_spoken_form(db, multi_engine, monkeypatch):
     import tests.test_all_episodes as walk
 
     seen = []
     real = GameService.handle_turn
     monkeypatch.setattr(GameService, "handle_turn", lambda self, **kw: seen.append(real(self, **kw)) or seen[-1])
     walk._walk(GameService(db, multi_engine, PEPPER), db, lambda c: c[0])
-    assert sum("sil<<400>>" in o.tts for o in seen) > 50
-    assert all("sil<<" not in o.text and "+" not in o.text for o in seen)
+    assert len(seen) > 100
+    for o in seen:
+        assert "<<" not in o.tts and ">>" not in o.tts and "[пауза" not in o.tts + o.text
+        assert all(re.fullmatch(r"sil <\[\d+\]>", m) for m in re.findall(r"sil\W*<\W*\d+\W*>", o.tts))
+        assert "sil" not in o.text and "<[" not in o.text and "+" not in o.text
+        assert speech_markup_stripped(o.tts).split() == o.text.split()
+    assert sum("sil <[400]>" in o.tts for o in seen) > 50
+
+
+def test_replayed_old_response_with_wrong_pause_form_is_cleaned(db, multi_engine):
+    """Ответ, сохранённый прежней версией с `sil<<…>>`, при повторе запроса не зачитывается."""
+    import json as _json
+
+    from sqlalchemy import select
+
+    from app.db.models import Profile
+
+    svc = GameService(db, multi_engine, PEPPER)
+    svc.handle_turn(player_id="p", session_id="s", message_id=0, utterance="", new_session=True)
+    with db.session_scope() as s:
+        prof = s.scalars(select(Profile)).one()
+        data = _json.loads(prof.last_response)
+        data["tts"] = "Привет! sil<<400>> Скажи «да». sil <[300]> Ну?"
+        prof.last_response = _json.dumps(data, ensure_ascii=False)
+    again = svc.handle_turn(player_id="p", session_id="s", message_id=0, utterance="", new_session=True)
+    assert again.replayed and "<<" not in again.tts and "sil <[300]>" in again.tts and again.tts.startswith("Привет!")
